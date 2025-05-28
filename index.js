@@ -6,7 +6,7 @@ const chalk = require('chalk');
 const fetch = require('node-fetch'); // v2 for CommonJS
 
 const allowedExtensions = ['.latte', '.html', '.php', '.twig', '.edge'];
-const excludedDirs = ['node_modules', 'vendor', 'dist', 'build', 'temp', '.idea', 'nuton', 'belenka'];
+const excludedDirs = ['node_modules', 'vendor', 'dist', 'build', 'temp', '.idea', '.git', 'log'];
 
 const input = process.argv[2];
 const outputJson = process.argv[3];
