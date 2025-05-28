@@ -6,6 +6,8 @@ The tool is ideal for developers and QA engineers who want to ensure that their 
 
 The script will print grouped and color-coded accessibility issues directly in your terminal. If a file name is provided as a second argument, the results will also be saved as a structured JSON report.
 
+![Bez názvu](https://github.com/user-attachments/assets/9746f447-41bc-4351-900a-c7e34630f0a7)
+
 
 ## ✅ Features
 
