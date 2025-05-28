@@ -1,0 +1,28 @@
+{
+  "name": "be-a11y",
+  "version": "1.0.0",
+  "description": "Web accesibility tools",
+  "keywords": [
+    "js",
+    "web-accesibility",
+    "a11y"
+  ],
+  "homepage": "https://github.com/be-lenka/be-a11y#readme",
+  "bugs": {
+    "url": "https://github.com/be-lenka/be-a11y/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/be-lenka/be-a11y.git"
+  },
+  "license": "MIT",
+  "author": "BeLenka X Barebarics",
+  "type": "commonjs",
+  "main": "check-headings-order.js",
+  "scripts": {
+    "test": "npm install"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}
