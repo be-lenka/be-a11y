@@ -1,44 +1,60 @@
 # Be-Accesible ! 
 
-Simple, scriptable tools to help developers build a more accessible web.  
-Starting with a CLI check for correct heading hierarchy in HTML-like files.
+**Accessibility Checker** is a Node.js-based CLI tool for scanning and reporting common accessibility issues in HTML-based projects. It supports both local directory scanning and remote URL analysis.
 
----
+The tool is ideal for developers and QA engineers who want to ensure that their HTML templates and frontend code follow basic accessibility best practices.
+
+The script will print grouped and color-coded accessibility issues directly in your terminal. If a file name is provided as a second argument, the results will also be saved as a structured JSON report.
+
 
 ## ✅ Features
 
-- Detects skipped heading levels (e.g., `<h1>` → `<h3>`)
-- Works with `.html`, `.php`, `.latte`
-- Ignores common build and vendor directories
-- Reports file + line number
-- CI-friendly (non-zero exit on issues)
-
----
+- ✅ Checks heading level order (e.g., h1 → h3 skipped)
+- 🖼️ Verifies `<img>` tags have `alt` attributes
+- ♿ Detects missing or invalid `aria-label` and `aria-labelledby`
+- 👀 Identifies elements that should have accessible labels (like `<button>`, `<a>`, `<svg>`)
+- 🎨 Checks color contrast between text and background (WCAG 2.1 AA level)
+- 📂 Supports scanning entire directories with `.html`, `.php`, `.latte`, `.twig`, `.edge` templates
+- 🌐 Supports analyzing live pages via URL
+- 📤 Optional JSON export of results
+- 🎨 Color-coded, grouped CLI output for easy readability (reports file + line number)
+- ▶️ Ignores common build and vendor directories
+- 📝 CI-friendly (non-zero exit on issues)
 
 ## 🚀 Usage
 
-1. Install dependencies:
+#### Install dependencies:
 
 ```bash
 npm install
 ```
 
-2. Run the script:
+#### Run the script
+
+You can analyze either a local directory or a remote URL.
 
 ```bash
-node check-headings-order.js
+node index.js /path/to/html/files/
+
+# or
+
+node index.js https://google.com
 ```
 
----
+#### Export results to JSON (optional)
+
+```bash
+node index.js /path/to/html/files report.json
+
+# or 
+
+node index.js https://google.com report.json
+```
 
 ## 🛠 Future Tools
 
-- Contrast checker
-- Missing alt text detection
-- ARIA role validation
 - GitHub Action support
 
----
 
 ## 🤝 Contribute
 
