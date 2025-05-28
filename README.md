@@ -6,10 +6,10 @@ The tool is ideal for developers and QA engineers who want to ensure that their 
 
 The script will print grouped and color-coded accessibility issues directly in your terminal. If a file name is provided as a second argument, the results will also be saved as a structured JSON report.
 
-![Bez názvu](https://github.com/user-attachments/assets/9746f447-41bc-4351-900a-c7e34630f0a7)
+![Bez názvu](https://github.com/user-attachments/assets/40c82668-7894-4560-a7ed-77f892021bdd)
 
 
-## ✅ Features
+## Features
 
 - ✅ Checks heading level order (e.g., h1 → h3 skipped)
 - 🖼️ Verifies `<img>` tags have `alt` attributes
@@ -23,7 +23,7 @@ The script will print grouped and color-coded accessibility issues directly in y
 - ▶️ Ignores common build and vendor directories
 - 📝 CI-friendly (non-zero exit on issues)
 
-## 🚀 Usage
+## Usage
 
 #### Install dependencies:
 
