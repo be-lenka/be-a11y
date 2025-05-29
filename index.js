@@ -256,6 +256,17 @@ function printErrors(errors) {
   }
 }
 
+function printSummary(errors) {
+  const grouped = groupErrors(errors);
+  const summary = Object.entries(grouped).map(([type, list]) => ({
+    "Issue Type": type,
+    Count: list.length,
+  }));
+
+  console.log(chalk.bold("\n📊 Accessibility Checksum Summary:"));
+  console.table(summary);
+}
+
 function exportToJson(errors, outputPath) {
   try {
     fs.writeFileSync(outputPath, JSON.stringify(errors, null, 2), "utf-8");
@@ -276,6 +287,7 @@ async function analyzeContent(content, label) {
 
   if (errors.length > 0) {
     printErrors(errors);
+    printSummary(errors);
     if (outputJson) exportToJson(errors, outputJson);
     process.exit(1);
   } else {
@@ -311,6 +323,7 @@ async function analyzeContent(content, label) {
 
     if (allErrors.length) {
       printErrors(allErrors);
+      printSummary(allErrors);
       if (outputJson) exportToJson(allErrors, outputJson);
       process.exit(1);
     } else {
