@@ -1,4 +1,4 @@
-# Be-Accesible ! 
+# Be-Accesible !
 
 Accessibility Checker is a Node.js-based CLI tool designed to scan and report common accessibility issues in HTML-based projects. It supports both local directory scanning and remote URL analysis, making it ideal for developers and QA engineers aiming to ensure their HTML templates and frontend code adhere to accessibility best practices.
 
@@ -9,6 +9,7 @@ Accessibility Checker is a Node.js-based CLI tool designed to scan and report co
 
 - ✅ Checks heading level order (e.g., h1 → h3 skipped)
 - 🖼️ Verifies `<img>` tags have `alt` attributes
+- ↔️ Checks `<img>` alt have a certain length
 - ♿ Detects missing or invalid `aria-label` and `aria-labelledby`
 - 👀 Identifies elements that should have accessible labels (like `<button>`, `<a>`, `<svg>`)
 - 🎨 Checks color contrast between text and background (WCAG 2.1 AA level)
@@ -44,7 +45,7 @@ node index.js https://google.com
 ```bash
 node index.js /path/to/html/files report.json
 
-# or 
+# or
 
 node index.js https://google.com report.json
 ```
@@ -68,5 +69,3 @@ Accessibility Checker assists organizations in aligning with EAA requirements by
 By integrating Accessibility Checker into your development workflow, you can proactively address accessibility concerns, ensuring your digital products and services are compliant with the EAA and accessible to all users.
 
 For more information on the European Accessibility Act, visit the [European Commission's official page](https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/union-equality-strategy-rights-persons-disabilities-2021-2030/european-accessibility-act_en).
-
-
