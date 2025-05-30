@@ -6,6 +6,7 @@ const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
 
 const allowedExtensions = [".latte", ".html", ".php", ".twig", ".edge"];
+
 const excludedDirs = [
   "node_modules",
   "vendor",
@@ -73,17 +74,73 @@ function checkHeadingOrder(content, file) {
 function checkAltAttributes(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
+  const seen = new Set();
 
   $("img").each((_, el) => {
-    if (!$(el).attr("alt")) {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
+    const $el = $(el);
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+    const locationKey = `${file}:${lineNumber}`;
+    if (seen.has(locationKey)) return;
+    seen.add(locationKey);
+
+    const alt = $el.attr("alt");
+    const role = $el.attr("role");
+    const isDecorative =
+      role === "presentation" || role === "none" || alt === "";
+    const isInLinkOrButton = $el.parents("a, button").length > 0;
+
+    // Case 1: Missing alt attribute entirely
+    if (typeof alt === "undefined") {
       errors.push({
         file,
         line: lineNumber,
         type: "missing-alt",
         message: `<img> tag is missing an alt attribute`,
+      });
+      return;
+    }
+
+    // Case 2: Decorative image with non-empty alt
+    if (isDecorative && alt !== "") {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "alt-decorative-incorrect",
+        message: `Decorative image should have empty alt="" or role="presentation"`,
+      });
+      return;
+    }
+
+    // Case 3: Functional image with empty alt
+    if (isInLinkOrButton && alt.trim() === "") {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "alt-functional-empty",
+        message: `Functional image inside <a> or <button> needs descriptive alt text`,
+      });
+      return;
+    }
+
+    // Case 4: alt exists but only contains whitespace
+    if (alt.trim() === "") {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "alt-empty",
+        message: `alt attribute exists but is empty; ensure this is intentional (e.g., decorative image)`,
+      });
+    }
+
+    // Case 5: alt is too long
+    if (alt.length > 30) {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "alt-too-long",
+        message: `alt attribute exceeds 30 characters (${alt.length} characters)`,
       });
     }
   });
@@ -236,21 +293,29 @@ function groupErrors(errors) {
 
 function printErrors(errors) {
   const grouped = groupErrors(errors);
+
   const typeLabels = {
     "heading-order": chalk.yellow.bold("📐 Heading Order"),
     "missing-alt": chalk.cyan.bold("🖼️ Missing ALT"),
+    "alt-empty": chalk.white.bold("⬜ ALT Empty"),
+    "alt-too-long": chalk.red.bold("↔️ ALT Too Long"),
+    "alt-decorative-incorrect": chalk.gray.bold("🌈 ALT Decorative"),
+    "alt-functional-empty": chalk.blueBright.bold("🔗 ALT Functional"),
     "aria-invalid": chalk.magenta.bold("♿ ARIA Issues"),
     "missing-aria": chalk.blue.bold("👀 Missing ARIA"),
-    "alt-too-long": chalk.red.bold("↔️  ALT too long"),
     contrast: chalk.red.bold("🎨 Contrast Issues"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
+
   for (const [type, list] of Object.entries(grouped)) {
-    console.log(`\n${typeLabels[type] || chalk.white.bold(type)}`);
+    const label = typeLabels[type] || chalk.white.bold(type);
+    console.log(`\n${label}`);
     for (const { file, line, message } of list) {
       console.log(
-        `  ${chalk.gray("-")} ${chalk.green(file)}:${chalk.yellow(line)} – ${chalk.white(message)}`,
+        `  ${chalk.gray("-")} ${chalk.green(file)}:${chalk.yellow(
+          line,
+        )} – ${chalk.white(message)}`,
       );
     }
   }
@@ -317,7 +382,6 @@ async function analyzeContent(content, label) {
         ...checkAriaLabels(content, file),
         ...checkMissingAria(content, file),
         ...checkContrast(content, file),
-        ...checkAltLengths(content, file),
       );
     }
 
