@@ -148,28 +148,6 @@ function checkAltAttributes(content, file) {
   return errors;
 }
 
-function checkAltLengths(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("img[alt]").each((_, el) => {
-    const altText = $(el).attr("alt");
-    if (altText.length > 30) {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-too-long",
-        message: `alt attribute exceeds 30 characters (${altText.length} characters)`,
-      });
-    }
-  });
-
-  return errors;
-}
-
 function checkAriaLabels(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
