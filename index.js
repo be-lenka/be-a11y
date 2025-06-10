@@ -5,7 +5,15 @@ const tinycolor = require("tinycolor2");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
 
-const allowedExtensions = [".latte", ".html", ".php", ".twig", ".edge"];
+const allowedExtensions = [
+  ".latte",
+  ".html",
+  ".php",
+  ".twig",
+  ".edge",
+  ".tsx",
+  ".jsx",
+];
 
 const excludedDirs = [
   "node_modules",
@@ -16,6 +24,7 @@ const excludedDirs = [
   ".idea",
   ".git",
   "log",
+  "bin",
 ];
 
 const input = process.argv[2];
