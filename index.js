@@ -37,6 +37,12 @@ if (!input) {
   process.exit(1);
 }
 
+/**
+ * Recursively finds files with allowed extensions in a directory.
+ * Ignores directories listed in `excludedDirs`.
+ * @param {string} dir - Directory path to search.
+ * @returns {string[]} Array of matched file paths.
+ */
 function findFiles(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   return entries.flatMap((entry) => {
@@ -50,10 +56,22 @@ function findFiles(dir) {
   });
 }
 
+/**
+ * Returns the line number where a specific tag index appears in the content.
+ * @param {string} content - File content as a string.
+ * @param {number} tagIndex - Index of the tag within the content.
+ * @returns {number} Line number (1-based).
+ */
 function getLineNumber(content, tagIndex) {
   return content.slice(0, tagIndex).split("\n").length;
 }
 
+/**
+ * Checks if headings (h1-h6) are used in the correct order (no jumps).
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of heading order errors.
+ */
 function checkHeadingOrder(content, file) {
   const $ = cheerio.load(content);
   let lastLevel = 0;
@@ -80,6 +98,13 @@ function checkHeadingOrder(content, file) {
   return errors;
 }
 
+/**
+ * Validates that all <img> tags have appropriate `alt` attributes.
+ * Checks for missing, empty, decorative, functional, or overly long alt texts.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of alt attribute errors.
+ */
 function checkAltAttributes(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
@@ -157,6 +182,13 @@ function checkAltAttributes(content, file) {
   return errors;
 }
 
+/**
+ * Checks for invalid or missing values in `aria-label` and `aria-labelledby`.
+ * Ensures `aria-labelledby` points to existing IDs.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of ARIA label errors.
+ */
 function checkAriaLabels(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
@@ -191,6 +223,13 @@ function checkAriaLabels(content, file) {
   return errors;
 }
 
+/**
+ * Checks if important elements lack visible text or an ARIA label.
+ * Applies to elements like buttons, links, SVGs, etc.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of missing ARIA label issues.
+ */
 function checkMissingAria(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
@@ -230,6 +269,13 @@ function checkMissingAria(content, file) {
   return errors;
 }
 
+/**
+ * Evaluates inline styles for text/background color contrast ratio.
+ * Flags contrast ratios below WCAG AA threshold (4.5).
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of contrast issues.
+ */
 function checkContrast(content, file) {
   const $ = cheerio.load(content);
   const errors = [];
@@ -270,6 +316,80 @@ function checkContrast(content, file) {
   return errors;
 }
 
+/**
+ * Rule to validate correct usage of ARIA roles (e.g., role="button" on non-interactive tags like <div> without a tabindex and click handler is misleading).
+ * @param {*} content
+ * @param {*} file
+ * @returns
+ */
+function checkAriaRoles(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("[role]").each((_, el) => {
+    const role = $(el).attr("role");
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+
+    // ... extend this list as needed
+    const allowedRoles = [
+      "button",
+      "checkbox",
+      "dialog",
+      "link",
+      "listbox",
+      "menu",
+      "navigation",
+      "progressbar",
+      "radio",
+      "slider",
+      "tab",
+    ];
+
+    if (!allowedRoles.includes(role)) {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "aria-role-invalid",
+        message: `Unrecognized or inappropriate ARIA role: "${role}"`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
+ * Verifies the presence of at least one semantic landmark element.
+ * Expected tags include <main>, <nav>, <header>, <footer>, <aside>.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List containing missing landmark error, if any.
+ */
+function checkLandmarkRoles(content, file) {
+  const $ = cheerio.load(content);
+  const landmarks = ["main", "nav", "header", "footer", "aside"];
+  const errors = [];
+
+  const present = landmarks.filter((tag) => $(tag).length > 0);
+  if (present.length === 0) {
+    errors.push({
+      file,
+      line: 1,
+      type: "missing-landmark",
+      message: "No landmark elements (main, nav, header, footer, aside) found",
+    });
+  }
+
+  return errors;
+}
+
+/**
+ * Groups an array of errors by their `type` property.
+ * @param {object[]} errors - List of error objects.
+ * @returns {object} Errors grouped by type.
+ */
 function groupErrors(errors) {
   return errors.reduce((acc, error) => {
     if (!acc[error.type]) acc[error.type] = [];
@@ -278,6 +398,11 @@ function groupErrors(errors) {
   }, {});
 }
 
+/**
+ * Prints detailed accessibility issues to the console.
+ * Issues are grouped by type with color-coded headings.
+ * @param {object[]} errors - List of error objects.
+ */
 function printErrors(errors) {
   const grouped = groupErrors(errors);
 
@@ -290,6 +415,8 @@ function printErrors(errors) {
     "alt-functional-empty": chalk.blueBright.bold("🔗 ALT Functional"),
     "aria-invalid": chalk.magenta.bold("♿ ARIA Issues"),
     "missing-aria": chalk.blue.bold("👀 Missing ARIA"),
+    "aria-role-invalid": chalk.blue.bold("🧩 ARIA Role Issues"),
+    "missing-landmark": chalk.yellowBright.bold("🏛️ Landmark Elements"),
     contrast: chalk.red.bold("🎨 Contrast Issues"),
   };
 
@@ -308,6 +435,10 @@ function printErrors(errors) {
   }
 }
 
+/**
+ * Prints a summary table of accessibility issue counts by type.
+ * @param {object[]} errors - List of error objects.
+ */
 function printSummary(errors) {
   const grouped = groupErrors(errors);
   const summary = Object.entries(grouped).map(([type, list]) => ({
@@ -319,6 +450,11 @@ function printSummary(errors) {
   console.table(summary);
 }
 
+/**
+ * Exports the full list of errors to a JSON file.
+ * @param {object[]} errors - List of error objects.
+ * @param {string} outputPath - Path to save the JSON file.
+ */
 function exportToJson(errors, outputPath) {
   try {
     fs.writeFileSync(outputPath, JSON.stringify(errors, null, 2), "utf-8");
@@ -328,6 +464,12 @@ function exportToJson(errors, outputPath) {
   }
 }
 
+/**
+ * Runs all accessibility checks on a single HTML content string.
+ * Used for analyzing remote HTML via URL input.
+ * @param {string} content - Raw HTML string.
+ * @param {string} label - Display name (usually file path or URL).
+ */
 async function analyzeContent(content, label) {
   const errors = [
     ...checkHeadingOrder(content, label),
@@ -335,6 +477,8 @@ async function analyzeContent(content, label) {
     ...checkAriaLabels(content, label),
     ...checkMissingAria(content, label),
     ...checkContrast(content, label),
+    ...checkAriaRoles(content, label),
+    ...checkLandmarkRoles(content, label),
   ];
 
   if (errors.length > 0) {
@@ -369,6 +513,8 @@ async function analyzeContent(content, label) {
         ...checkAriaLabels(content, file),
         ...checkMissingAria(content, file),
         ...checkContrast(content, file),
+        ...checkAriaRoles(content, file),
+        ...checkLandmarkRoles(content, file),
       );
     }
 
