@@ -30,12 +30,33 @@ const excludedDirs = [
 const input = process.argv[2];
 const outputJson = process.argv[3];
 
+let config = {};
+
+try {
+  config = JSON.parse(fs.readFileSync("a11y.config.json", "utf-8"));
+} catch (err) {
+  console.warn(
+    chalk.yellow(
+      "⚠️ No config file found or invalid JSON. Using default rules.",
+    ),
+  );
+  config = { rules: {} }; // fallback to default: all enabled
+}
+
 if (!input) {
   console.error(
     chalk.red("Please provide a directory path or URL as the first argument."),
   );
   process.exit(1);
 }
+
+/**
+ * Determines if a rule should run based on configuration.
+ * Defaults to enabled unless explicitly set to false.
+ * @param {string} rule - Rule name from config.rules keys.
+ * @returns {boolean} Whether the rule is enabled.
+ */
+const shouldRun = (rule) => config.rules[rule] !== false;
 
 /**
  * Recursively finds files with allowed extensions in a directory.
@@ -472,13 +493,15 @@ function exportToJson(errors, outputPath) {
  */
 async function analyzeContent(content, label) {
   const errors = [
-    ...checkHeadingOrder(content, label),
-    ...checkAltAttributes(content, label),
-    ...checkAriaLabels(content, label),
-    ...checkMissingAria(content, label),
-    ...checkContrast(content, label),
-    ...checkAriaRoles(content, label),
-    ...checkLandmarkRoles(content, label),
+    ...(shouldRun("heading-order") ? checkHeadingOrder(content, label) : []),
+    ...(shouldRun("alt-attributes") ? checkAltAttributes(content, label) : []),
+    ...(shouldRun("aria-invalid") ? checkAriaLabels(content, label) : []),
+    ...(shouldRun("missing-aria") ? checkMissingAria(content, label) : []),
+    ...(shouldRun("contrast") ? checkContrast(content, label) : []),
+    ...(shouldRun("aria-role-invalid") ? checkAriaRoles(content, label) : []),
+    ...(shouldRun("missing-landmark")
+      ? checkLandmarkRoles(content, label)
+      : []),
   ];
 
   if (errors.length > 0) {
@@ -507,14 +530,21 @@ async function analyzeContent(content, label) {
 
     for (const file of files) {
       const content = fs.readFileSync(file, "utf-8");
+
       allErrors.push(
-        ...checkHeadingOrder(content, file),
-        ...checkAltAttributes(content, file),
-        ...checkAriaLabels(content, file),
-        ...checkMissingAria(content, file),
-        ...checkContrast(content, file),
-        ...checkAriaRoles(content, file),
-        ...checkLandmarkRoles(content, file),
+        ...(shouldRun("heading-order") ? checkHeadingOrder(content, file) : []),
+        ...(shouldRun("alt-attributes")
+          ? checkAltAttributes(content, file)
+          : []),
+        ...(shouldRun("aria-invalid") ? checkAriaLabels(content, file) : []),
+        ...(shouldRun("missing-aria") ? checkMissingAria(content, file) : []),
+        ...(shouldRun("contrast") ? checkContrast(content, file) : []),
+        ...(shouldRun("aria-role-invalid")
+          ? checkAriaRoles(content, file)
+          : []),
+        ...(shouldRun("missing-landmark")
+          ? checkLandmarkRoles(content, file)
+          : []),
       );
     }
 
@@ -526,10 +556,5 @@ async function analyzeContent(content, label) {
     } else {
       console.log(chalk.green.bold("✅ No accessibility issues found!"));
     }
-  } else {
-    console.error(
-      chalk.red("Invalid input. Please provide a valid folder or URL."),
-    );
-    process.exit(1);
   }
 })();
