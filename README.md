@@ -1,71 +1,107 @@
-# Be-Accesible !
+# Be-Accessible !
 
 Accessibility Checker is a Node.js-based CLI tool designed to scan and report common accessibility issues in HTML-based projects. It supports both local directory scanning and remote URL analysis, making it ideal for developers and QA engineers aiming to ensure their HTML templates and frontend code adhere to accessibility best practices.
 
-![Bez názvu](https://github.com/user-attachments/assets/40c82668-7894-4560-a7ed-77f892021bdd)
+![Accessibility Checker](https://github.com/user-attachments/assets/40c82668-7894-4560-a7ed-77f892021bdd)
 
+---
 
 ## Features
 
-- ✅ Checks heading level order (e.g., h1 → h3 skipped)
-- 🖼️ Verifies `<img>` tags have `alt` attributes
-- ↔️ Checks `<img>` alt have a certain length
-- ♿ Detects missing or invalid `aria-label` and `aria-labelledby`
-- 👀 Identifies elements that should have accessible labels (like `<button>`, `<a>`, `<svg>`)
-- 🎨 Checks color contrast between text and background (WCAG 2.1 AA level)
-- 📂 Supports scanning entire directories with `.html`, `.php`, `.latte`, `.twig`, `.edge` templates
-- 🌐 Supports analyzing live pages via URL
-- 📤 Optional JSON export of results
-- 🎨 Color-coded, grouped CLI output for easy readability (reports file + line number)
-- ▶️ Ignores common build and vendor directories
-- 📝 CI-friendly (non-zero exit on issues)
+* ✅ Checks heading level order (e.g., h1 → h3 skipped)
+* 🖼️ Verifies `<img>` tags have `alt` attributes
+
+  * ⬜ Detects empty `alt` attributes
+  * ↔️ Warns about excessively long `alt` texts (configurable)
+  * 🌈 Flags decorative images with incorrect `alt`
+  * 🔗 Detects functional images missing descriptive `alt`
+* ♿ Detects missing or invalid `aria-label` and `aria-labelledby`
+* 👀 Identifies elements that should have accessible labels (like `<button>`, `<a>`, `<svg>`)
+* 🎨 Checks color contrast between text and background (WCAG 2.1 AA level)
+* 📂 Supports scanning entire directories with `.html`, `.php`, `.latte`, `.twig`, `.edge` templates
+* 🌐 Supports analyzing live pages via URL
+* 📤 Optional JSON export of results
+* 🎨 Color-coded, grouped CLI output for easy readability (reports file + line number)
+* ▶️ Ignores common build and vendor directories
+* 📝 CI-friendly (non-zero exit on issues)
+* 🗃️ Configurable rule-based architecture using `a11y.config.json`
+
+  * Disable or enable specific rules
+  * Granular control over sub-rules (e.g., `alt-too-long`)
+
+---
 
 ## Usage
 
-#### Install dependencies:
+### Install dependencies:
 
 ```bash
 npm install
 ```
 
-#### Run the script
-
-You can analyze either a local directory or a remote URL.
+### Run the script:
 
 ```bash
 node index.js /path/to/html/files/
 
 # or
 
-node index.js https://google.com
+node index.js https://example.com
 ```
 
-#### Export results to JSON (optional)
+### Export results to JSON (optional):
 
 ```bash
 node index.js /path/to/html/files report.json
 
 # or
 
-node index.js https://google.com report.json
+node index.js https://example.com report.json
 ```
+
+### Example Configuration (`a11y.config.json`):
+
+```json
+{
+  "rules": {
+    "heading-order": true,
+    "missing-alt": true,
+    "alt-empty": true,
+    "alt-too-long": false,
+    "alt-decorative-incorrect": true,
+    "alt-functional-empty": true,
+    "aria-invalid": true,
+    "missing-aria": true,
+    "aria-role-invalid": true,
+    "missing-landmark": false,
+    "contrast": true
+  }
+}
+```
+
+> Configuration allows per-rule toggling. All rules are enabled by default unless explicitly disabled.
+
+---
 
 ## Future Tools
 
-- GitHub Action support
+* GitHub Action support
+* Rule severity levels (`warning` vs `error`)
+* CI summary report in SARIF format
+* VS Code plugin integration
 
-## TLDR
+---
 
-🏛️ European Accessibility Act (EAA) Compliance
+## TL;DR: 🏩 European Accessibility Act (EAA) Compliance
 
-The European Accessibility Act (EAA), effective from June 28, 2025, mandates that a range of products and services, including websites and mobile applications, meet accessibility requirements to ensure equal access for persons with disabilities across the EU. This directive aims to harmonize accessibility standards, facilitating easier cross-border trade and enhancing the availability of accessible products and services .
+The European Accessibility Act (EAA), effective from **June 28, 2025**, mandates that a range of products and services, including websites and mobile applications, meet accessibility requirements to ensure equal access for persons with disabilities across the EU. This directive aims to harmonize accessibility standards, facilitate cross-border trade, and enhance the availability of accessible digital content.
 
-Accessibility Checker assists organizations in aligning with EAA requirements by:
+Accessibility Checker helps teams prepare by:
 
-- Identifying Non-Compliance: Detects common accessibility issues that could lead to non-compliance with EAA standards.
-- Facilitating Remediation: Provides detailed reports, enabling developers to address and rectify accessibility shortcomings effectively.
-- Supporting Inclusive Design: Encourages the adoption of accessibility best practices, contributing to the creation of inclusive digital environments.
+* ⚠️ Identifying Non-Compliance: Surfaces common issues aligned with EAA requirements
+* ✅ Facilitating Remediation: Produces detailed output to assist in debugging and fixing violations
+* 🏰 Supporting Inclusive Design: Encourages building experiences usable by all
 
-By integrating Accessibility Checker into your development workflow, you can proactively address accessibility concerns, ensuring your digital products and services are compliant with the EAA and accessible to all users.
+By integrating Accessibility Checker into your CI/CD pipelines and code reviews, you can **ensure compliance proactively**.
 
-For more information on the European Accessibility Act, visit the [European Commission's official page](https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/union-equality-strategy-rights-persons-disabilities-2021-2030/european-accessibility-act_en).
+**More on EAA:** [European Commission's official page](https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/union-equality-strategy-rights-persons-disabilities-2021-2030/european-accessibility-act_en)
