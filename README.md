@@ -10,7 +10,6 @@ Accessibility Checker is a Node.js-based CLI tool designed to scan and report co
 
 * ✅ Checks heading level order (e.g., h1 → h3 skipped)
 * 🖼️ Verifies `<img>` tags have `alt` attributes
-
   * ⬜ Detects empty `alt` attributes
   * ↔️ Warns about excessively long `alt` texts (configurable)
   * 🌈 Flags decorative images with incorrect `alt`
@@ -25,7 +24,6 @@ Accessibility Checker is a Node.js-based CLI tool designed to scan and report co
 * ▶️ Ignores common build and vendor directories
 * 📝 CI-friendly (non-zero exit on issues)
 * 🗃️ Configurable rule-based architecture using `a11y.config.json`
-
   * Disable or enable specific rules
   * Granular control over sub-rules (e.g., `alt-too-long`)
 
