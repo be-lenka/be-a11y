@@ -26,6 +26,7 @@
 * 🗃️ Supports rule-based configuration via `a11y.config.json`
   * Enable or disable specific checks
   * Fine-tune behavior of sub-rules (e.g., `alt-too-long`)
+* 🔗 Checks that <label> elements are correctly associated with form controls (via for or nesting) (new!)
 
 ---
 
