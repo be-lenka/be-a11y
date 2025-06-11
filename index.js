@@ -407,6 +407,53 @@ function checkLandmarkRoles(content, file) {
 }
 
 /**
+ * Checks that each <label> element is properly associated with a form control.
+ * It should either have a 'for' attribute pointing to an existing control ID
+ * OR contain an input/select/textarea element inside.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of label association errors.
+ */
+function checkLabelsWithoutFor(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("label").each((_, el) => {
+    const $label = $(el);
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+
+    const forAttr = $label.attr("for");
+
+    if (forAttr) {
+      const inputMatch = $(`[id='${forAttr}']`);
+      if (!inputMatch.length) {
+        errors.push({
+          file,
+          line: lineNumber,
+          type: "label-for-missing",
+          message: `<label for="${forAttr}"> does not match any element with that ID`,
+        });
+      }
+    } else {
+      const hasNestedControl =
+        $label.find("input, select, textarea").length > 0;
+      if (!hasNestedControl) {
+        errors.push({
+          file,
+          line: lineNumber,
+          type: "label-missing-for",
+          message: `<label> is not associated with any form control (missing 'for' or nested input)`,
+        });
+      }
+    }
+  });
+
+  return errors;
+}
+
+/**
  * Groups an array of errors by their `type` property.
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
@@ -439,6 +486,8 @@ function printErrors(errors) {
     "aria-role-invalid": chalk.blue.bold("🧩 ARIA Role Issues"),
     "missing-landmark": chalk.yellowBright.bold("🏛️ Landmark Elements"),
     contrast: chalk.red.bold("🎨 Contrast Issues"),
+    "label-for-missing": chalk.red.bold("🔗 Broken Label Association"),
+    "label-missing-for": chalk.yellow.bold("🏷️ Unassociated Label"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
@@ -502,6 +551,9 @@ async function analyzeContent(content, label) {
     ...(shouldRun("missing-landmark")
       ? checkLandmarkRoles(content, label)
       : []),
+    ...(shouldRun("label-missing-for")
+      ? checkLabelsWithoutFor(content, label)
+      : []),
   ];
 
   if (errors.length > 0) {
@@ -544,6 +596,9 @@ async function analyzeContent(content, label) {
           : []),
         ...(shouldRun("missing-landmark")
           ? checkLandmarkRoles(content, file)
+          : []),
+        ...(shouldRun("label-missing-for")
+          ? checkLabelsWithoutFor(content, file)
           : []),
       );
     }

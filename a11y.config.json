@@ -6,6 +6,7 @@
     "missing-aria": true,
     "aria-role-invalid": true,
     "missing-landmark": false,
-    "contrast": true
+    "contrast": true,
+    "label-missing-for": true
   }
 }
