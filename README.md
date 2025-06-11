@@ -1,6 +1,6 @@
-# Be-Accessible !
+# be-a11y !
 
-Accessibility Checker is a Node.js-based CLI tool designed to scan and report common accessibility issues in HTML-based projects. It supports both local directory scanning and remote URL analysis, making it ideal for developers and QA engineers aiming to ensure their HTML templates and frontend code adhere to accessibility best practices.
+**be-a11y** is a Node.js-based CLI tool designed for automated evaluation and reporting of accessibility issues in HTML-based projects. It supports both local directory scanning and remote URL analysis to help developers identify common accessibility problems.
 
 ![Accessibility Checker](https://github.com/user-attachments/assets/40c82668-7894-4560-a7ed-77f892021bdd)
 
@@ -8,24 +8,24 @@ Accessibility Checker is a Node.js-based CLI tool designed to scan and report co
 
 ## Features
 
-* ✅ Checks heading level order (e.g., h1 → h3 skipped)
-* 🖼️ Verifies `<img>` tags have `alt` attributes
-  * ⬜ Detects empty `alt` attributes
-  * ↔️ Warns about excessively long `alt` texts (configurable)
-  * 🌈 Flags decorative images with incorrect `alt`
-  * 🔗 Detects functional images missing descriptive `alt`
-* ♿ Detects missing or invalid `aria-label` and `aria-labelledby`
-* 👀 Identifies elements that should have accessible labels (like `<button>`, `<a>`, `<svg>`)
-* 🎨 Checks color contrast between text and background (WCAG 2.1 AA level)
-* 📂 Supports scanning entire directories with `.html`, `.php`, `.latte`, `.twig`, `.edge` templates
-* 🌐 Supports analyzing live pages via URL
-* 📤 Optional JSON export of results
-* 🎨 Color-coded, grouped CLI output for easy readability (reports file + line number)
-* ▶️ Ignores common build and vendor directories
-* 📝 CI-friendly (non-zero exit on issues)
-* 🗃️ Configurable rule-based architecture using `a11y.config.json`
-  * Disable or enable specific rules
-  * Granular control over sub-rules (e.g., `alt-too-long`)
+* ✅ Detects incorrect heading level order (e.g., `h1` → `h3` skipped)
+* 🖼️ Evaluates `<img>` tags for appropriate `alt` attributes
+  * ⬜ Flags empty `alt` attributes
+  * ↔️ Detects excessively long `alt` texts (configurable)
+  * 🌈 Verifies decorative images have empty or proper `alt`
+  * 🔗 Highlights functional images missing descriptive `alt`
+* ♿ Validates `aria-label` and `aria-labelledby` usage
+* 👀 Detects elements that lack accessible names or labels (e.g., `<button>`, `<a>`, `<svg>`)
+* 🎨 Evaluates color contrast between text and background against WCAG 2.1 AA criteria
+* 📂 Analyzes local files in directories with supported extensions: `.html`, `.php`, `.latte`, `.twig`, `.edge`, `.tsx`, `.jsx`
+* 🌐 Supports remote evaluation by analyzing pages via URL
+* 📤 Optional JSON export of evaluation results
+* 🎨 CLI output is grouped, color-coded, and includes file names with line numbers
+* ▶️ Automatically excludes common build directories (e.g., `node_modules`, `dist`)
+* 📝 CI-friendly: returns a non-zero exit code when issues are found
+* 🗃️ Supports rule-based configuration via `a11y.config.json`
+  * Enable or disable specific checks
+  * Fine-tune behavior of sub-rules (e.g., `alt-too-long`)
 
 ---
 
@@ -90,16 +90,19 @@ node index.js https://example.com report.json
 
 ---
 
-## TL;DR: 🏩 European Accessibility Act (EAA) Compliance
+## TL;DR: 🏩 European Accessibility Act (EAA) Compliance Support
 
-The European Accessibility Act (EAA), effective from **June 28, 2025**, mandates that a range of products and services, including websites and mobile applications, meet accessibility requirements to ensure equal access for persons with disabilities across the EU. This directive aims to harmonize accessibility standards, facilitate cross-border trade, and enhance the availability of accessible digital content.
+The European Accessibility Act (EAA), effective from **June 28, 2025**, requires certain digital products and services to comply with accessibility standards across the EU.
 
-Accessibility Checker helps teams prepare by:
+While this tool does not guarantee full compliance, **be-a11y** supports teams in their evaluation efforts by:
 
-* ⚠️ Identifying Non-Compliance: Surfaces common issues aligned with EAA requirements
-* ✅ Facilitating Remediation: Produces detailed output to assist in debugging and fixing violations
-* 🏰 Supporting Inclusive Design: Encourages building experiences usable by all
-
-By integrating Accessibility Checker into your CI/CD pipelines and code reviews, you can **ensure compliance proactively**.
+* ⚠️ Detecting common accessibility issues as outlined in standards like WCAG 2.1
+* ✅ Providing actionable findings to assist with remediation workflows
+* 🏰 Promoting awareness and adoption of inclusive development practices
 
 **More on EAA:** [European Commission's official page](https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/union-equality-strategy-rights-persons-disabilities-2021-2030/european-accessibility-act_en)
+
+---
+
+**Tool name:** `be-a11y`
+**Repository:** [https://github.com/be-lenka/be-a11y](https://github.com/be-lenka/be-a11y)
