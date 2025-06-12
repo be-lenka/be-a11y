@@ -35,7 +35,11 @@
 ### Install dependencies:
 
 ```bash
-npm install
+git clone git@github.com:be-lenka/be-a11y.git && cd be-a11y && npm install
+
+# or 
+
+npm i @belenkadev/be-a11y
 ```
 
 ### Run the script:
