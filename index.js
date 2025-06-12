@@ -198,6 +198,23 @@ function checkAltAttributes(content, file) {
         message: `alt attribute exceeds 30 characters (${alt.length} characters)`,
       });
     }
+
+    // Case 6: redundant title equals alt
+    const title = $el.attr("title");
+    if (
+      alt &&
+      title &&
+      alt.trim().toLowerCase() === title.trim().toLowerCase()
+    ) {
+      if (config.rules["redundant-title"] !== false) {
+        errors.push({
+          file,
+          line: lineNumber,
+          type: "redundant-title",
+          message: `<img> has a 'title' attribute that duplicates its 'alt' text: "${alt}"`,
+        });
+      }
+    }
   });
 
   return errors;
@@ -488,6 +505,7 @@ function printErrors(errors) {
     contrast: chalk.red.bold("🎨 Contrast Issues"),
     "label-for-missing": chalk.red.bold("🔗 Broken Label Association"),
     "label-missing-for": chalk.yellow.bold("🏷️ Unassociated Label"),
+    "redundant-title": chalk.gray.bold("📛 Redundant Title Text"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));

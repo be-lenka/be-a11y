@@ -2,6 +2,7 @@
   "rules": {
     "heading-order": true,
     "alt-attributes": true,
+    "redundant-title": true,
     "aria-invalid": true,
     "missing-aria": true,
     "aria-role-invalid": true,
