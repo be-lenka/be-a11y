@@ -27,7 +27,7 @@
   * Enable or disable specific checks
   * Fine-tune behavior of sub-rules (e.g., `alt-too-long`)
 * 🔗 Checks that <label> elements are correctly associated with form controls (via for or nesting) (new!)
-* 📛 Checks that `<img>` elements does not have a `title` and `alt` tag with same content (`alt` preveils)
+* 📛 Checks that `<img>` elements does not have a `title` and `alt` tag with same content (`alt` preveils) (new!)
 
 ---
 
