@@ -91,6 +91,14 @@ node index.js https://example.com report.json
 
 ---
 
+## 🤝 Contributing
+
+We welcome contributions from the community! Whether it's a bug fix, feature proposal, or documentation update — your input is valuable.
+
+Please read our [Contribution Guide](./docs/CONTRIBUTING.md) to get started.
+
+---
+
 ## TL;DR: 🏩 European Accessibility Act (EAA) Compliance Support
 
 The European Accessibility Act (EAA), effective from **June 28, 2025**, requires certain digital products and services to comply with accessibility standards across the EU.
