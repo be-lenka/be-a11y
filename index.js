@@ -120,6 +120,35 @@ function checkHeadingOrder(content, file) {
 }
 
 /**
+ * Checks for empty heading tags (e.g., <h2></h2> or <h2>   </h2>).
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of empty heading errors.
+ */
+function checkHeadingEmpty(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
+    const text = $(el).text().trim();
+    if (text === "") {
+      const html = $.html(el);
+      const tagIndex = content.indexOf(html);
+      const lineNumber = getLineNumber(content, tagIndex);
+
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "heading-empty",
+        message: `<${el.name}> element is empty or contains only whitespace`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
  * Validates that all <img> tags have appropriate `alt` attributes.
  * Checks for missing, empty, decorative, functional, or overly long alt texts.
  * @param {string} content - HTML content.
@@ -493,19 +522,20 @@ function printErrors(errors) {
 
   const typeLabels = {
     "heading-order": chalk.yellow.bold("📐 Heading Order"),
-    "missing-alt": chalk.cyan.bold("🖼️ Missing ALT"),
-    "alt-empty": chalk.white.bold("⬜ ALT Empty"),
-    "alt-too-long": chalk.red.bold("↔️ ALT Too Long"),
-    "alt-decorative-incorrect": chalk.gray.bold("🌈 ALT Decorative"),
-    "alt-functional-empty": chalk.blueBright.bold("🔗 ALT Functional"),
-    "aria-invalid": chalk.magenta.bold("♿ ARIA Issues"),
-    "missing-aria": chalk.blue.bold("👀 Missing ARIA"),
-    "aria-role-invalid": chalk.blue.bold("🧩 ARIA Role Issues"),
-    "missing-landmark": chalk.yellowBright.bold("🏛️ Landmark Elements"),
-    contrast: chalk.red.bold("🎨 Contrast Issues"),
-    "label-for-missing": chalk.red.bold("🔗 Broken Label Association"),
-    "label-missing-for": chalk.yellow.bold("🏷️ Unassociated Label"),
-    "redundant-title": chalk.gray.bold("📛 Redundant Title Text"),
+    "heading-empty": chalk.red.bold("❗ Empty Headings"),
+    "missing-alt": chalk.cyan.bold("🖼️  Missing ALT"),
+    "alt-empty": chalk.white.bold("⬜  ALT Empty"),
+    "alt-too-long": chalk.red.bold("↔️  ALT Too Long"),
+    "alt-decorative-incorrect": chalk.gray.bold("🌈  ALT Decorative"),
+    "alt-functional-empty": chalk.blueBright.bold("🔗  ALT Functional"),
+    "aria-invalid": chalk.magenta.bold("♿  ARIA Issues"),
+    "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
+    "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
+    // "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
+    contrast: chalk.red.bold("🎨  Contrast Issues"),
+    "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
+    "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
+    "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
@@ -561,6 +591,7 @@ function exportToJson(errors, outputPath) {
 async function analyzeContent(content, label) {
   const errors = [
     ...(shouldRun("heading-order") ? checkHeadingOrder(content, label) : []),
+    ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, label) : []),
     ...(shouldRun("alt-attributes") ? checkAltAttributes(content, label) : []),
     ...(shouldRun("aria-invalid") ? checkAriaLabels(content, label) : []),
     ...(shouldRun("missing-aria") ? checkMissingAria(content, label) : []),
@@ -603,6 +634,7 @@ async function analyzeContent(content, label) {
 
       allErrors.push(
         ...(shouldRun("heading-order") ? checkHeadingOrder(content, file) : []),
+        ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, file) : []),
         ...(shouldRun("alt-attributes")
           ? checkAltAttributes(content, file)
           : []),

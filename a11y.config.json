@@ -1,6 +1,7 @@
 {
   "rules": {
     "heading-order": true,
+    "heading-empty": true,
     "alt-attributes": true,
     "redundant-title": true,
     "aria-invalid": true,

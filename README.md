@@ -18,17 +18,17 @@
 * 👀 Detects elements that lack accessible names or labels (e.g., `<button>`, `<a>`, `<svg>`)
 * 🎨 Evaluates color contrast between text and background against WCAG 2.1 AA criteria
 * 📂 Analyzes local files in directories with supported extensions: `.html`, `.php`, `.latte`, `.twig`, `.edge`, `.tsx`, `.jsx`
-* 🌐 Supports remote evaluation by analyzing pages via URL
-* 📤 Optional JSON export of evaluation results
+* 🌐 Supports remote evaluation by analyzing pages via `URL`
+* 📤 Optional `JSON` export of evaluation results
 * 🎨 CLI output is grouped, color-coded, and includes file names with line numbers
 * ▶️ Automatically excludes common build directories (e.g., `node_modules`, `dist`)
 * 📝 CI-friendly: returns a non-zero exit code when issues are found
 * 🗃️ Supports rule-based configuration via `a11y.config.json`
   * Enable or disable specific checks
   * Fine-tune behavior of sub-rules (e.g., `alt-too-long`)
-* 🔗 Checks that <label> elements are correctly associated with form controls (via for or nesting) (new!)
-* 📛 Checks that `<img>` elements does not have a `title` and `alt` tag with same content (`alt` preveils) (new!)
-
+* 🔗 Checks that `<label>` elements are correctly associated with form controls (via for or nesting)
+* 📛 Checks that `<img>` elements does not have a `title` and `alt` tag with same content (`alt` preveils)
+* ❗ Checks if the presented `h1-6` headings have not empty text or contains only whitespace (new!)
 ---
 
 ## Usage
@@ -69,6 +69,7 @@ node index.js https://example.com report.json
 {
   "rules": {
     "heading-order": true,
+    "heading-empty": true,
     "missing-alt": true,
     "alt-empty": true,
     "alt-too-long": false,
