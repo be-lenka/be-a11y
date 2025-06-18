@@ -9,6 +9,10 @@
     "aria-role-invalid": true,
     "missing-landmark": false,
     "contrast": true,
-    "label-missing-for": true
+    "label-missing-for": true,
+    "duplicate-id": true,
+    "multiple-h1": true,
+    "input-unlabeled": true,
+    "empty-link": true
   }
 }

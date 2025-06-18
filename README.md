@@ -6,29 +6,60 @@
 
 ---
 
-## Features
+<details>
+<summary><strong>🧩 Click to view full feature list</strong></summary>
 
-* ✅ Detects incorrect heading level order (e.g., `h1` → `h3` skipped)
-* 🖼️ Evaluates `<img>` tags for appropriate `alt` attributes
-  * ⬜ Flags empty `alt` attributes
-  * ↔️ Detects excessively long `alt` texts (configurable)
-  * 🌈 Verifies decorative images have empty or proper `alt`
-  * 🔗 Highlights functional images missing descriptive `alt`
-* ♿ Validates `aria-label` and `aria-labelledby` usage
-* 👀 Detects elements that lack accessible names or labels (e.g., `<button>`, `<a>`, `<svg>`)
-* 🎨 Evaluates color contrast between text and background against WCAG 2.1 AA criteria
-* 📂 Analyzes local files in directories with supported extensions: `.html`, `.php`, `.latte`, `.twig`, `.edge`, `.tsx`, `.jsx`
-* 🌐 Supports remote evaluation by analyzing pages via `URL`
-* 📤 Optional `JSON` export of evaluation results
-* 🎨 CLI output is grouped, color-coded, and includes file names with line numbers
-* ▶️ Automatically excludes common build directories (e.g., `node_modules`, `dist`)
-* 📝 CI-friendly: returns a non-zero exit code when issues are found
-* 🗃️ Supports rule-based configuration via `a11y.config.json`
-  * Enable or disable specific checks
-  * Fine-tune behavior of sub-rules (e.g., `alt-too-long`)
-* 🔗 Checks that `<label>` elements are correctly associated with form controls (via for or nesting)
-* 📛 Checks that `<img>` elements does not have a `title` and `alt` tag with same content (`alt` preveils)
-* ❗ Checks if the presented `h1-6` headings have not empty text or contains only whitespace (new!)
+## ✅ Features
+
+### 📐 Heading Structure
+- Detects incorrect heading level order (e.g., `h1` → `h3` skipped)
+- Flags empty headings (`<h1>`–`<h6>`) with no or whitespace-only content
+- Warns if multiple `<h1>` tags are present
+
+### 🖼️ Image Accessibility
+- Verifies that `<img>` tags have appropriate `alt` attributes
+  - ⬜ Flags empty `alt` attributes
+  - ↔️ Detects excessively long `alt` texts (configurable)
+  - 🌈 Ensures decorative images have correct `alt=""` or role attributes
+  - 🔗 Highlights functional images (e.g., inside links/buttons) with empty `alt`
+  - 📛 Detects redundant `title` attributes that duplicate the `alt` content
+
+### ♿ ARIA & Semantics
+- Validates `aria-label` and `aria-labelledby` usage
+- Ensures `aria-labelledby` references valid IDs
+- Flags misuse of ARIA roles (e.g., non-interactive elements with `role="button"`)
+- Identifies missing landmark regions (`<main>`, `<nav>`, `<header>`, etc.)
+
+### 👀 Accessible Naming
+- Detects elements missing accessible names (like `<button>`, `<a>`, `<svg>`, form fields)
+- Warns about unlabeled checkboxes and radio buttons
+- 🔗 Checks that `<label>` elements are correctly associated with form controls (via `for` or nesting)
+
+### 📭 Link & ID Hygiene
+- Flags empty or placeholder `<a>` tags lacking text or `href`
+- Warns about duplicate `id` attributes in the same document
+
+### 🎨 Color Contrast
+- Evaluates text/background contrast in inline styles
+- Flags contrast below WCAG 2.1 AA threshold (4.5:1)
+
+### 📂 Smart File & URL Analysis
+- Recursively analyzes files with extensions: `.html`, `.php`, `.latte`, `.twig`, `.edge`, `.tsx`, `.jsx`
+- Ignores common build directories (`node_modules`, `vendor`, `dist`, etc.)
+- Accepts URLs and fetches remote pages for evaluation
+
+### 🧪 CI/CD Friendly
+- CLI output grouped and color-coded with file names and line numbers
+- Returns non-zero exit code when issues are found
+- Supports export of evaluation results to JSON
+
+### ⚙️ Custom Configuration
+- Fully configurable via `a11y.config.json`
+- Enable or disable specific checks
+- Fine-tune subrules (e.g., disable `alt-too-long` or `redundant-title`)
+
+</details>
+
 ---
 
 ## Usage

@@ -500,6 +500,99 @@ function checkLabelsWithoutFor(content, file) {
 }
 
 /**
+ * Checks for links that are empty or lack href/text.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of link errors.
+ */
+function checkEmptyLinks(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("a").each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr("href");
+    const text = $el.text().trim();
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+
+    if ((!href || href === "#") && !text) {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "empty-link",
+        message: `<a> tag is empty or has no href/text`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
+ * Checks if checkboxes and radios are properly labeled.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of form label errors.
+ */
+function checkUnlabeledInputs(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("input[type='checkbox'], input[type='radio']").each((_, el) => {
+    const $el = $(el);
+    const id = $el.attr("id");
+    const label = id && $(`label[for='${id}']`).length > 0;
+    const wrapped = $el.parents("label").length > 0;
+
+    if (!label && !wrapped) {
+      const html = $.html(el);
+      const tagIndex = content.indexOf(html);
+      const lineNumber = getLineNumber(content, tagIndex);
+
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "input-unlabeled",
+        message: `<input type="${$el.attr("type")}"> is not associated with a label`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
+ * Checks that there is only one <h1> on the page.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of multiple H1 tag warnings.
+ */
+function checkMultipleH1(content, file) {
+  const $ = cheerio.load(content);
+  const h1s = $("h1");
+
+  if (h1s.length > 1) {
+    return h1s
+      .map((_, el) => {
+        const html = $.html(el);
+        const tagIndex = content.indexOf(html);
+        const lineNumber = getLineNumber(content, tagIndex);
+        return {
+          file,
+          line: lineNumber,
+          type: "multiple-h1",
+          message: `Multiple <h1> tags found (${h1s.length} total)`,
+        };
+      })
+      .get();
+  }
+
+  return [];
+}
+
+/**
  * Groups an array of errors by their `type` property.
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
@@ -524,18 +617,21 @@ function printErrors(errors) {
     "heading-order": chalk.yellow.bold("📐 Heading Order"),
     "heading-empty": chalk.red.bold("❗ Empty Headings"),
     "missing-alt": chalk.cyan.bold("🖼️  Missing ALT"),
-    "alt-empty": chalk.white.bold("⬜  ALT Empty"),
+    "alt-empty": chalk.white.bold("⬜  AL T Empty"),
     "alt-too-long": chalk.red.bold("↔️  ALT Too Long"),
     "alt-decorative-incorrect": chalk.gray.bold("🌈  ALT Decorative"),
     "alt-functional-empty": chalk.blueBright.bold("🔗  ALT Functional"),
     "aria-invalid": chalk.magenta.bold("♿  ARIA Issues"),
     "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
     "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
-    // "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
+    "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
     contrast: chalk.red.bold("🎨  Contrast Issues"),
     "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
     "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
     "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
+    "multiple-h1": chalk.yellow.bold("🧱 Multiple H1s"),
+    "input-unlabeled": chalk.magenta.bold("🔘 Unlabeled Checkboxes/Radios"),
+    "empty-link": chalk.red.bold("📭 Empty or Useless Link"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
@@ -603,6 +699,11 @@ async function analyzeContent(content, label) {
     ...(shouldRun("label-missing-for")
       ? checkLabelsWithoutFor(content, label)
       : []),
+    ...(shouldRun("multiple-h1") ? checkMultipleH1(content, label) : []),
+    ...(shouldRun("input-unlabeled")
+      ? checkUnlabeledInputs(content, label)
+      : []),
+    ...(shouldRun("empty-link") ? checkEmptyLinks(content, label) : []),
   ];
 
   if (errors.length > 0) {
@@ -650,6 +751,11 @@ async function analyzeContent(content, label) {
         ...(shouldRun("label-missing-for")
           ? checkLabelsWithoutFor(content, file)
           : []),
+        ...(shouldRun("multiple-h1") ? checkMultipleH1(content, file) : []),
+        ...(shouldRun("input-unlabeled")
+          ? checkUnlabeledInputs(content, file)
+          : []),
+        ...(shouldRun("empty-link") ? checkEmptyLinks(content, file) : []),
       );
     }
 
