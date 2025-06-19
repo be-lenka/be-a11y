@@ -23,6 +23,7 @@
   - 🌈 Ensures decorative images have correct `alt=""` or role attributes
   - 🔗 Highlights functional images (e.g., inside links/buttons) with empty `alt`
   - 📛 Detects redundant `title` attributes that duplicate the `alt` content
+  - 🖼️ Verifies `<iframe>` elements include a descriptive, non-empty `title` attribute (assistive tech-friendly) (new!)
 
 ### ♿ ARIA & Semantics
 - Validates `aria-label` and `aria-labelledby` usage

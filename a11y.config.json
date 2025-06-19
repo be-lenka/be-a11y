@@ -13,6 +13,7 @@
     "duplicate-id": true,
     "multiple-h1": true,
     "input-unlabeled": true,
-    "empty-link": true
+    "empty-link": true,
+    "iframe-title-missing": true
   }
 }

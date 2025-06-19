@@ -593,6 +593,36 @@ function checkMultipleH1(content, file) {
 }
 
 /**
+ * Checks that <iframe> elements have a non-empty, descriptive title attribute.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of iframe title issues.
+ */
+function checkIframeTitles(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("iframe").each((_, el) => {
+    const $el = $(el);
+    const title = $el.attr("title");
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+
+    if (!title || title.trim() === "") {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "iframe-title-missing",
+        message: `<iframe> is missing a non-empty 'title' attribute to describe its content`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
  * Groups an array of errors by their `type` property.
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
@@ -632,6 +662,7 @@ function printErrors(errors) {
     "multiple-h1": chalk.yellow.bold("🧱 Multiple H1s"),
     "input-unlabeled": chalk.magenta.bold("🔘 Unlabeled Checkboxes/Radios"),
     "empty-link": chalk.red.bold("📭 Empty or Useless Link"),
+    "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
@@ -704,6 +735,9 @@ async function analyzeContent(content, label) {
       ? checkUnlabeledInputs(content, label)
       : []),
     ...(shouldRun("empty-link") ? checkEmptyLinks(content, label) : []),
+    ...(shouldRun("iframe-title-missing")
+      ? checkIframeTitles(content, label)
+      : []),
   ];
 
   if (errors.length > 0) {
@@ -745,9 +779,9 @@ async function analyzeContent(content, label) {
         ...(shouldRun("aria-role-invalid")
           ? checkAriaRoles(content, file)
           : []),
-        ...(shouldRun("missing-landmark")
-          ? checkLandmarkRoles(content, file)
-          : []),
+        // ...(shouldRun("missing-landmark")
+        //   ? checkLandmarkRoles(content, file)
+        //   : []),
         ...(shouldRun("label-missing-for")
           ? checkLabelsWithoutFor(content, file)
           : []),
@@ -756,6 +790,9 @@ async function analyzeContent(content, label) {
           ? checkUnlabeledInputs(content, file)
           : []),
         ...(shouldRun("empty-link") ? checkEmptyLinks(content, file) : []),
+        ...(shouldRun("iframe-title-missing")
+          ? checkIframeTitles(content, file)
+          : []),
       );
     }
 
