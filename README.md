@@ -4,10 +4,6 @@
 
 ![Accessibility Checker](https://github.com/user-attachments/assets/40c82668-7894-4560-a7ed-77f892021bdd)
 
----
-
-<details>
-<summary><strong>🧩 Click to view full feature list</strong></summary>
 
 ## ✅ Features
 
@@ -58,8 +54,6 @@
 - Fully configurable via `a11y.config.json`
 - Enable or disable specific checks
 - Fine-tune subrules (e.g., disable `alt-too-long` or `redundant-title`)
-
-</details>
 
 ---
 
