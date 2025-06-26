@@ -14,6 +14,7 @@
     "multiple-h1": true,
     "input-unlabeled": true,
     "empty-link": true,
-    "iframe-title-missing": true
+    "iframe-title-missing": true,
+    "link-new-tab-warning": true
   }
 }

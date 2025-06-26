@@ -37,7 +37,7 @@ try {
 } catch (err) {
   console.warn(
     chalk.yellow(
-      "⚠️ No config file found or invalid JSON. Using default rules.",
+      "⚠️  No config file found or invalid JSON. Using default rules.",
     ),
   );
   config = { rules: {} }; // fallback to default: all enabled
@@ -623,6 +623,46 @@ function checkIframeTitles(content, file) {
 }
 
 /**
+ * Checks if links opening in a new tab/window notify screen readers.
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} List of new tab warning issues.
+ */
+function checkLinksOpenNewTab(content, file) {
+  const $ = cheerio.load(content);
+  const errors = [];
+
+  $("a[target='_blank']").each((_, el) => {
+    const $el = $(el);
+    const ariaLabel = $el.attr("aria-label") || "";
+    const html = $.html(el);
+    const tagIndex = content.indexOf(html);
+    const lineNumber = getLineNumber(content, tagIndex);
+
+    const hasScreenReaderNote = $el
+      .find(".sr-only, .visually-hidden")
+      .filter((i, n) => {
+        const text = $(n).text().toLowerCase();
+        return text.includes("opens in a new tab") || text.includes("opens in new window");
+      }).length > 0;
+
+    const describesNewTab = ariaLabel.toLowerCase().includes("opens in a new tab") ||
+      ariaLabel.toLowerCase().includes("opens in new window");
+
+    if (!describesNewTab && !hasScreenReaderNote) {
+      errors.push({
+        file,
+        line: lineNumber,
+        type: "link-new-tab-warning",
+        message: `<a> with target="_blank" should inform users it opens in a new tab (e.g., via aria-label or screen reader note)`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+/**
  * Groups an array of errors by their `type` property.
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
@@ -663,6 +703,7 @@ function printErrors(errors) {
     "input-unlabeled": chalk.magenta.bold("🔘 Unlabeled Checkboxes/Radios"),
     "empty-link": chalk.red.bold("📭 Empty or Useless Link"),
     "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
+    "link-new-tab-warning": chalk.yellow.bold("🧭  New Tab Warning"),
   };
 
   console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
@@ -717,8 +758,6 @@ function exportToJson(errors, outputPath) {
  */
 async function analyzeContent(content, label) {
   const errors = [
-    ...(shouldRun("heading-order") ? checkHeadingOrder(content, label) : []),
-    ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, label) : []),
     ...(shouldRun("alt-attributes") ? checkAltAttributes(content, label) : []),
     ...(shouldRun("aria-invalid") ? checkAriaLabels(content, label) : []),
     ...(shouldRun("missing-aria") ? checkMissingAria(content, label) : []),
@@ -730,13 +769,18 @@ async function analyzeContent(content, label) {
     ...(shouldRun("label-missing-for")
       ? checkLabelsWithoutFor(content, label)
       : []),
-    ...(shouldRun("multiple-h1") ? checkMultipleH1(content, label) : []),
     ...(shouldRun("input-unlabeled")
       ? checkUnlabeledInputs(content, label)
       : []),
     ...(shouldRun("empty-link") ? checkEmptyLinks(content, label) : []),
     ...(shouldRun("iframe-title-missing")
       ? checkIframeTitles(content, label)
+      : []),
+    ...(shouldRun("multiple-h1") ? checkMultipleH1(content, label) : []),
+    ...(shouldRun("heading-order") ? checkHeadingOrder(content, label) : []),
+    ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, label) : []),
+    ...(shouldRun("link-new-tab-warning")
+      ? checkLinksOpenNewTab(content, label)
       : []),
   ];
 
@@ -768,8 +812,6 @@ async function analyzeContent(content, label) {
       const content = fs.readFileSync(file, "utf-8");
 
       allErrors.push(
-        ...(shouldRun("heading-order") ? checkHeadingOrder(content, file) : []),
-        ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, file) : []),
         ...(shouldRun("alt-attributes")
           ? checkAltAttributes(content, file)
           : []),
@@ -785,13 +827,18 @@ async function analyzeContent(content, label) {
         ...(shouldRun("label-missing-for")
           ? checkLabelsWithoutFor(content, file)
           : []),
-        ...(shouldRun("multiple-h1") ? checkMultipleH1(content, file) : []),
         ...(shouldRun("input-unlabeled")
           ? checkUnlabeledInputs(content, file)
           : []),
         ...(shouldRun("empty-link") ? checkEmptyLinks(content, file) : []),
         ...(shouldRun("iframe-title-missing")
           ? checkIframeTitles(content, file)
+          : []),
+        ...(shouldRun("multiple-h1") ? checkMultipleH1(content, file) : []),
+        ...(shouldRun("heading-order") ? checkHeadingOrder(content, file) : []),
+        ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, file) : []),
+        ...(shouldRun("link-new-tab-warning")
+          ? checkLinksOpenNewTab(content, file)
           : []),
       );
     }

@@ -39,6 +39,7 @@
 ### 📭 Link & ID Hygiene
 - Flags empty or placeholder `<a>` tags lacking text or `href`
 - Warns about duplicate `id` attributes in the same document
+- Warns when `target="_blank"` does not contains appropriate `aria-label` for a new page
 
 ### 🎨 Color Contrast
 - Evaluates text/background contrast in inline styles
