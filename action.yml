@@ -1,0 +1,17 @@
+name: 'be-a11y Accessibility Checker'
+description: 'Automated accessibility evaluation for HTML-based projects via be-a11y. Analyzes local directories or remote URLs for common a11y issues.'
+author: 'be-lenka'
+inputs:
+  url:
+    description: 'URL or path (eg. https://example.com or ./public)'
+    required: true
+  report:
+    description: '[optional] JSON report (eg. report.json)'
+    required: false
+    default: ''
+runs:
+  using: 'node20'
+  main: 'index.js'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
