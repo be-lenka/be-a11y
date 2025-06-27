@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: npm ci
+        run: npm i
       - name: Run be-a11y on URL
         uses: ./ # or be-lenka/be-a11y@main po merge
         with:
