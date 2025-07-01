@@ -412,6 +412,7 @@ function checkAriaRoles(content, file) {
       "radio",
       "slider",
       "tab",
+      "img",	    
     ];
 
     if (!allowedRoles.includes(role)) {
