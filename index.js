@@ -1,9 +1,23 @@
 const fs = require("fs");
 const path = require("path");
-const cheerio = require("cheerio");
-const tinycolor = require("tinycolor2");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
+
+// SET OF RULES
+const headingOrder = require("./src/rules/headingOrder");
+const headingEmpty = require("./src/rules/headingEmpty");
+const altAttributes = require("./src/rules/altAttributes");
+const ariaLabels = require("./src/rules/ariaLabels");
+const missingAria = require("./src/rules/missingAria");
+const linksOpenNewTab = require("./src/rules/linksOpenNewTab");
+const contrast = require("./src/rules/contrast");
+const landmarkRoles = require("./src/rules/landmarkRoles");
+const iframeTitles = require("./src/rules/iframeTitles");
+const ariaRoles = require("./src/rules/ariaRoles");
+const labelsWithoutFor = require("./src/rules/labelsWithoutFor");
+const multipleH1 = require("./src/rules/multipleH1");
+const emptyLinks = require("./src/rules/emptyLinks");
+const unlabeledInputs = require("./src/rules/unlabeledInputs");
 
 const allowedExtensions = [
   ".latte",
@@ -78,592 +92,6 @@ function findFiles(dir) {
 }
 
 /**
- * Returns the line number where a specific tag index appears in the content.
- * @param {string} content - File content as a string.
- * @param {number} tagIndex - Index of the tag within the content.
- * @returns {number} Line number (1-based).
- */
-function getLineNumber(content, tagIndex) {
-  return content.slice(0, tagIndex).split("\n").length;
-}
-
-/**
- * Checks if headings (h1-h6) are used in the correct order (no jumps).
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of heading order errors.
- */
-function checkHeadingOrder(content, file) {
-  const $ = cheerio.load(content);
-  let lastLevel = 0;
-  const errors = [];
-
-  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
-    const level = parseInt(el.name.substring(1));
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    if (lastLevel && level - lastLevel > 1) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "heading-order",
-        message: `<${el.name}> follows <h${lastLevel}>`,
-      });
-    }
-
-    lastLevel = level;
-  });
-
-  return errors;
-}
-
-/**
- * Checks for empty heading tags (e.g., <h2></h2> or <h2>   </h2>).
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of empty heading errors.
- */
-function checkHeadingEmpty(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
-    const text = $(el).text().trim();
-    if (text === "") {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
-
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "heading-empty",
-        message: `<${el.name}> element is empty or contains only whitespace`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Validates that all <img> tags have appropriate `alt` attributes.
- * Checks for missing, empty, decorative, functional, or overly long alt texts.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of alt attribute errors.
- */
-function checkAltAttributes(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-  const seen = new Set();
-
-  $("img").each((_, el) => {
-    const $el = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-    const locationKey = `${file}:${lineNumber}`;
-    if (seen.has(locationKey)) return;
-    seen.add(locationKey);
-
-    const alt = $el.attr("alt");
-    const role = $el.attr("role");
-    const isDecorative =
-      role === "presentation" || role === "none" || alt === "";
-    const isInLinkOrButton = $el.parents("a, button").length > 0;
-
-    // Case 1: Missing alt attribute entirely
-    if (typeof alt === "undefined") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "missing-alt",
-        message: `<img> tag is missing an alt attribute`,
-      });
-      return;
-    }
-
-    // Case 2: Decorative image with non-empty alt
-    if (isDecorative && alt !== "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-decorative-incorrect",
-        message: `Decorative image should have empty alt="" or role="presentation"`,
-      });
-      return;
-    }
-
-    // Case 3: Functional image with empty alt
-    if (isInLinkOrButton && alt.trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-functional-empty",
-        message: `Functional image inside <a> or <button> needs descriptive alt text`,
-      });
-      return;
-    }
-
-    // Case 4: alt exists but only contains whitespace
-    if (alt.trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-empty",
-        message: `alt attribute exists but is empty; ensure this is intentional (e.g., decorative image)`,
-      });
-    }
-
-    // Case 5: alt is too long
-    if (alt.length > 30) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-too-long",
-        message: `alt attribute exceeds 30 characters (${alt.length} characters)`,
-      });
-    }
-
-    // Case 6: redundant title equals alt
-    const title = $el.attr("title");
-    if (
-      alt &&
-      title &&
-      alt.trim().toLowerCase() === title.trim().toLowerCase()
-    ) {
-      if (config.rules["redundant-title"] !== false) {
-        errors.push({
-          file,
-          line: lineNumber,
-          type: "redundant-title",
-          message: `<img> has a 'title' attribute that duplicates its 'alt' text: "${alt}"`,
-        });
-      }
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks for invalid or missing values in `aria-label` and `aria-labelledby`.
- * Ensures `aria-labelledby` points to existing IDs.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of ARIA label errors.
- */
-function checkAriaLabels(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("[aria-label], [aria-labelledby]").each((_, el) => {
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    if ($(el).attr("aria-label") && $(el).attr("aria-label").trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "aria-invalid",
-        message: `aria-label is empty`,
-      });
-    }
-
-    if ($(el).attr("aria-labelledby")) {
-      const id = $(el).attr("aria-labelledby");
-      if (!$(`#${id}`).length) {
-        errors.push({
-          file,
-          line: lineNumber,
-          type: "aria-invalid",
-          message: `aria-labelledby references a non-existent ID: ${id}`,
-        });
-      }
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks if important elements lack visible text or an ARIA label.
- * Applies to elements like buttons, links, SVGs, etc.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of missing ARIA label issues.
- */
-function checkMissingAria(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  const selectors = [
-    "button",
-    "a[href]",
-    'input[type="text"]',
-    "svg",
-    "form",
-    "section",
-    "nav",
-    "aside",
-    "main",
-    "dialog",
-  ];
-
-  $(selectors.join(",")).each((_, el) => {
-    const $el = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    const hasAria = $el.attr("aria-label") || $el.attr("aria-labelledby");
-    const hasText = $el.text().trim().length > 0;
-
-    if (!hasAria && !hasText) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "missing-aria",
-        message: `<${el.name}> element should have an aria-label or visible text`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Evaluates inline styles for text/background color contrast ratio.
- * Flags contrast ratios below WCAG AA threshold (4.5).
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of contrast issues.
- */
-function checkContrast(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("*").each((_, el) => {
-    const style = $(el).attr("style");
-    if (
-      style &&
-      style.includes("color") &&
-      style.includes("background-color")
-    ) {
-      const inlineStyles = style.split(";").reduce((acc, rule) => {
-        const [key, value] = rule.split(":");
-        if (key && value) acc[key.trim()] = value.trim();
-        return acc;
-      }, {});
-
-      const fg = tinycolor(inlineStyles["color"]);
-      const bg = tinycolor(inlineStyles["background-color"]);
-
-      if (fg.isValid() && bg.isValid()) {
-        const contrast = tinycolor.readability(bg, fg);
-        if (contrast < 4.5) {
-          const html = $.html(el);
-          const tagIndex = content.indexOf(html);
-          const lineNumber = getLineNumber(content, tagIndex);
-          errors.push({
-            file,
-            line: lineNumber,
-            type: "contrast",
-            message: `Low contrast ratio (${contrast.toFixed(2)}): ${inlineStyles["color"]} on ${inlineStyles["background-color"]}`,
-          });
-        }
-      }
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Rule to validate correct usage of ARIA roles (e.g., role="button" on non-interactive tags like <div> without a tabindex and click handler is misleading).
- * @param {*} content
- * @param {*} file
- * @returns
- */
-function checkAriaRoles(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("[role]").each((_, el) => {
-    const role = $(el).attr("role");
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    // ... extend this list as needed
-    const allowedRoles = [
-      "button",
-      "checkbox",
-      "dialog",
-      "link",
-      "listbox",
-      "menu",
-      "navigation",
-      "progressbar",
-      "radio",
-      "slider",
-      "tab",
-      "img",	    
-    ];
-
-    if (!allowedRoles.includes(role)) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "aria-role-invalid",
-        message: `Unrecognized or inappropriate ARIA role: "${role}"`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Verifies the presence of at least one semantic landmark element.
- * Expected tags include <main>, <nav>, <header>, <footer>, <aside>.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List containing missing landmark error, if any.
- */
-function checkLandmarkRoles(content, file) {
-  const $ = cheerio.load(content);
-  const landmarks = ["main", "nav", "header", "footer", "aside"];
-  const errors = [];
-
-  const present = landmarks.filter((tag) => $(tag).length > 0);
-  if (present.length === 0) {
-    errors.push({
-      file,
-      line: 1,
-      type: "missing-landmark",
-      message: "No landmark elements (main, nav, header, footer, aside) found",
-    });
-  }
-
-  return errors;
-}
-
-/**
- * Checks that each <label> element is properly associated with a form control.
- * It should either have a 'for' attribute pointing to an existing control ID
- * OR contain an input/select/textarea element inside.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of label association errors.
- */
-function checkLabelsWithoutFor(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("label").each((_, el) => {
-    const $label = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    const forAttr = $label.attr("for");
-
-    if (forAttr) {
-      const inputMatch = $(`[id='${forAttr}']`);
-      if (!inputMatch.length) {
-        errors.push({
-          file,
-          line: lineNumber,
-          type: "label-for-missing",
-          message: `<label for="${forAttr}"> does not match any element with that ID`,
-        });
-      }
-    } else {
-      const hasNestedControl =
-        $label.find("input, select, textarea").length > 0;
-      if (!hasNestedControl) {
-        errors.push({
-          file,
-          line: lineNumber,
-          type: "label-missing-for",
-          message: `<label> is not associated with any form control (missing 'for' or nested input)`,
-        });
-      }
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks for links that are empty or lack href/text.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of link errors.
- */
-function checkEmptyLinks(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("a").each((_, el) => {
-    const $el = $(el);
-    const href = $el.attr("href");
-    const text = $el.text().trim();
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    if ((!href || href === "#") && !text) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "empty-link",
-        message: `<a> tag is empty or has no href/text`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks if checkboxes and radios are properly labeled.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of form label errors.
- */
-function checkUnlabeledInputs(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("input[type='checkbox'], input[type='radio']").each((_, el) => {
-    const $el = $(el);
-    const id = $el.attr("id");
-    const label = id && $(`label[for='${id}']`).length > 0;
-    const wrapped = $el.parents("label").length > 0;
-
-    if (!label && !wrapped) {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
-
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "input-unlabeled",
-        message: `<input type="${$el.attr("type")}"> is not associated with a label`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks that there is only one <h1> on the page.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of multiple H1 tag warnings.
- */
-function checkMultipleH1(content, file) {
-  const $ = cheerio.load(content);
-  const h1s = $("h1");
-
-  if (h1s.length > 1) {
-    return h1s
-      .map((_, el) => {
-        const html = $.html(el);
-        const tagIndex = content.indexOf(html);
-        const lineNumber = getLineNumber(content, tagIndex);
-        return {
-          file,
-          line: lineNumber,
-          type: "multiple-h1",
-          message: `Multiple <h1> tags found (${h1s.length} total)`,
-        };
-      })
-      .get();
-  }
-
-  return [];
-}
-
-/**
- * Checks that <iframe> elements have a non-empty, descriptive title attribute.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of iframe title issues.
- */
-function checkIframeTitles(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("iframe").each((_, el) => {
-    const $el = $(el);
-    const title = $el.attr("title");
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    if (!title || title.trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "iframe-title-missing",
-        message: `<iframe> is missing a non-empty 'title' attribute to describe its content`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
- * Checks if links opening in a new tab/window notify screen readers.
- * @param {string} content - HTML content.
- * @param {string} file - File name.
- * @returns {object[]} List of new tab warning issues.
- */
-function checkLinksOpenNewTab(content, file) {
-  const $ = cheerio.load(content);
-  const errors = [];
-
-  $("a[target='_blank']").each((_, el) => {
-    const $el = $(el);
-    const ariaLabel = $el.attr("aria-label") || "";
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    const hasScreenReaderNote = $el
-      .find(".sr-only, .visually-hidden")
-      .filter((i, n) => {
-        const text = $(n).text().toLowerCase();
-        return text.includes("opens in a new tab") || text.includes("opens in new window");
-      }).length > 0;
-
-    const describesNewTab = ariaLabel.toLowerCase().includes("opens in a new tab") ||
-      ariaLabel.toLowerCase().includes("opens in new window");
-
-    if (!describesNewTab && !hasScreenReaderNote) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "link-new-tab-warning",
-        message: `<a> with target="_blank" should inform users it opens in a new tab (e.g., via aria-label or screen reader note)`,
-      });
-    }
-  });
-
-  return errors;
-}
-
-/**
  * Groups an array of errors by their `type` property.
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
@@ -696,13 +124,13 @@ function printErrors(errors) {
     "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
     "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
     "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
-    contrast: chalk.red.bold("🎨  Contrast Issues"),
+    "contrast": chalk.red.bold("🎨  Contrast Issues"),
     "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
     "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
     "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
-    "multiple-h1": chalk.yellow.bold("🧱 Multiple H1s"),
-    "input-unlabeled": chalk.magenta.bold("🔘 Unlabeled Checkboxes/Radios"),
-    "empty-link": chalk.red.bold("📭 Empty or Useless Link"),
+    "multiple-h1": chalk.yellow.bold("🧱  Multiple H1s"),
+    "input-unlabeled": chalk.magenta.bold("🔘  Unlabeled Checkboxes/Radios"),
+    "empty-link": chalk.red.bold("📭  Empty or Useless Link"),
     "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
     "link-new-tab-warning": chalk.yellow.bold("🧭  New Tab Warning"),
   };
@@ -759,30 +187,20 @@ function exportToJson(errors, outputPath) {
  */
 async function analyzeContent(content, label) {
   const errors = [
-    ...(shouldRun("alt-attributes") ? checkAltAttributes(content, label) : []),
-    ...(shouldRun("aria-invalid") ? checkAriaLabels(content, label) : []),
-    ...(shouldRun("missing-aria") ? checkMissingAria(content, label) : []),
-    ...(shouldRun("contrast") ? checkContrast(content, label) : []),
-    ...(shouldRun("aria-role-invalid") ? checkAriaRoles(content, label) : []),
-    ...(shouldRun("missing-landmark")
-      ? checkLandmarkRoles(content, label)
-      : []),
-    ...(shouldRun("label-missing-for")
-      ? checkLabelsWithoutFor(content, label)
-      : []),
-    ...(shouldRun("input-unlabeled")
-      ? checkUnlabeledInputs(content, label)
-      : []),
-    ...(shouldRun("empty-link") ? checkEmptyLinks(content, label) : []),
-    ...(shouldRun("iframe-title-missing")
-      ? checkIframeTitles(content, label)
-      : []),
-    ...(shouldRun("multiple-h1") ? checkMultipleH1(content, label) : []),
-    ...(shouldRun("heading-order") ? checkHeadingOrder(content, label) : []),
-    ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, label) : []),
-    ...(shouldRun("link-new-tab-warning")
-      ? checkLinksOpenNewTab(content, label)
-      : []),
+    ...(shouldRun("alt-attributes") ? altAttributes(content, label) : []),
+    ...(shouldRun("aria-invalid") ? ariaLabels(content, label) : []),
+    ...(shouldRun("missing-aria") ? missingAria(content, label) : []),
+    ...(shouldRun("contrast") ? contrast(content, label) : []),
+    ...(shouldRun("aria-role-invalid") ? ariaRoles(content, label) : []),
+    ...(shouldRun("missing-landmark") ? landmarkRoles(content, label) : []),
+    ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, label) : []),
+    ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, label) : []),
+    ...(shouldRun("empty-link") ? emptyLinks(content, label) : []),
+    ...(shouldRun("iframe-title-missing") ? iframeTitles(content, label) : []),
+    ...(shouldRun("multiple-h1") ? multipleH1(content, label) : []),
+    ...(shouldRun("heading-order") ? headingOrder(content, label) : []),
+    ...(shouldRun("heading-empty") ? headingEmpty(content, label) : []),
+    ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, label) : []),
   ];
 
   if (errors.length > 0) {
@@ -813,34 +231,20 @@ async function analyzeContent(content, label) {
       const content = fs.readFileSync(file, "utf-8");
 
       allErrors.push(
-        ...(shouldRun("alt-attributes")
-          ? checkAltAttributes(content, file)
-          : []),
-        ...(shouldRun("aria-invalid") ? checkAriaLabels(content, file) : []),
-        ...(shouldRun("missing-aria") ? checkMissingAria(content, file) : []),
-        ...(shouldRun("contrast") ? checkContrast(content, file) : []),
-        ...(shouldRun("aria-role-invalid")
-          ? checkAriaRoles(content, file)
-          : []),
-        // ...(shouldRun("missing-landmark")
-        //   ? checkLandmarkRoles(content, file)
-        //   : []),
-        ...(shouldRun("label-missing-for")
-          ? checkLabelsWithoutFor(content, file)
-          : []),
-        ...(shouldRun("input-unlabeled")
-          ? checkUnlabeledInputs(content, file)
-          : []),
-        ...(shouldRun("empty-link") ? checkEmptyLinks(content, file) : []),
-        ...(shouldRun("iframe-title-missing")
-          ? checkIframeTitles(content, file)
-          : []),
-        ...(shouldRun("multiple-h1") ? checkMultipleH1(content, file) : []),
-        ...(shouldRun("heading-order") ? checkHeadingOrder(content, file) : []),
-        ...(shouldRun("heading-empty") ? checkHeadingEmpty(content, file) : []),
-        ...(shouldRun("link-new-tab-warning")
-          ? checkLinksOpenNewTab(content, file)
-          : []),
+        ...(shouldRun("alt-attributes") ? altAttributes(content, file, config) : []),
+        ...(shouldRun("aria-invalid") ? ariaLabels(content, file) : []),
+        ...(shouldRun("missing-aria") ? missingAria(content, file) : []),
+        ...(shouldRun("contrast") ? contrast(content, file) : []),
+        ...(shouldRun("aria-role-invalid") ? ariaRoles(content, file) : []),
+        ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, file) : []),
+        ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, file) : []),
+        ...(shouldRun("empty-link") ? emptyLinks(content, file) : []),
+        ...(shouldRun("iframe-title-missing") ? iframeTitles(content, file) : []),
+        ...(shouldRun("multiple-h1") ? multipleH1(content, file) : []),
+        ...(shouldRun("heading-order") ? headingOrder(content, file) : []),
+        ...(shouldRun("heading-empty") ? headingEmpty(content, file) : []),
+        ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, file) : []),
+        // ...(shouldRun("missing-landmark") ? landmarkRoles(content, file) : []),
       );
     }
 
