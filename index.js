@@ -20,7 +20,6 @@ const multipleH1 = require("./src/rules/multipleH1");
 const emptyLinks = require("./src/rules/emptyLinks");
 const unlabeledInputs = require("./src/rules/unlabeledInputs");
 
-
 // HELPERS
 const getLineNumber = require("./src/utils/getLineNumber");
 
