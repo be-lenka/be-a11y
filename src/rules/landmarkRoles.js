@@ -1,5 +1,4 @@
 const cheerio = require("cheerio");
-const getLineNumber = require("../utils/getLineNumber");
 
 /**
  * Verifies the presence of at least one semantic landmark element.

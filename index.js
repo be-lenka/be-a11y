@@ -1,6 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const cheerio = require("cheerio");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
 
@@ -19,9 +18,6 @@ const labelsWithoutFor = require("./src/rules/labelsWithoutFor");
 const multipleH1 = require("./src/rules/multipleH1");
 const emptyLinks = require("./src/rules/emptyLinks");
 const unlabeledInputs = require("./src/rules/unlabeledInputs");
-
-// HELPERS
-const getLineNumber = require("./src/utils/getLineNumber");
 
 const allowedExtensions = [
   ".latte",
