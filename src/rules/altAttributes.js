@@ -4,6 +4,7 @@ const getLineNumber = require("../utils/getLineNumber");
 /**
  * Validates that all <img> tags have appropriate `alt` attributes.
  * Checks for missing, empty, decorative, functional, or overly long alt texts.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of alt attribute errors.

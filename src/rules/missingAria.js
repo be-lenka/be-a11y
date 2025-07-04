@@ -4,6 +4,7 @@ const getLineNumber = require("../utils/getLineNumber");
 /**
  * Checks if important elements lack visible text or an ARIA label.
  * Applies to elements like buttons, links, SVGs, etc.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of missing ARIA label issues.

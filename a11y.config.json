@@ -16,5 +16,25 @@
     "empty-link": true,
     "iframe-title-missing": true,
     "link-new-tab-warning": true
+  },
+  "allowedExtensions": {
+    ".latte": true,
+    ".html": true,
+    ".php": true,
+    ".twig": true,
+    ".edge": true,
+    ".tsx": true,
+    ".jsx": true
+  },
+  "excludedDirs": {
+    "node_modules": true,
+    "vendor": true,
+    "dist": true,
+    "build": true,
+    "temp": true,
+    ".idea": true,
+    ".git": true,
+    "log": true,
+    "bin": true
   }
 }

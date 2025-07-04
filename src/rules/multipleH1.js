@@ -3,6 +3,7 @@ const getLineNumber = require("../utils/getLineNumber");
 
 /**
  * Checks that there is only one <h1> on the page.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of multiple H1 tag warnings.
