@@ -75,4 +75,4 @@ function printSummary(errors) {
 }
 
 
-module.exports = { groupErrors, printErrors, printSummary }
+module.exports = { printErrors, printSummary }
