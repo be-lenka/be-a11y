@@ -2,7 +2,9 @@ const cheerio = require("cheerio");
 const getLineNumber = require("../utils/getLineNumber");
 
 /**
- * Rule to validate correct usage of ARIA roles (e.g., role="button" on non-interactive tags like <div> without a tabindex and click handler is misleading).
+ * Rule to validate correct usage of ARIA roles
+ * (e.g., role="button" on non-interactive tags like <div> without a tabindex and click handler is misleading).
+ *
  * @param {*} content
  * @param {*} file
  * @returns

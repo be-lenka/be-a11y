@@ -3,6 +3,7 @@ const cheerio = require("cheerio");
 /**
  * Verifies the presence of at least one semantic landmark element.
  * Expected tags include <main>, <nav>, <header>, <footer>, <aside>.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List containing missing landmark error, if any.

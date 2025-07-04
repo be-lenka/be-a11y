@@ -3,6 +3,7 @@ const getLineNumber = require("../utils/getLineNumber");
 
 /**
  * Checks if links opening in a new tab/window notify screen readers.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of new tab warning issues.

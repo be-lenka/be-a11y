@@ -3,6 +3,7 @@ const getLineNumber = require("../utils/getLineNumber");
 
 /**
  * Checks for links that are empty or lack href/text.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of link errors.

@@ -4,6 +4,7 @@ const getLineNumber = require("../utils/getLineNumber");
 /**
  * Checks for invalid or missing values in `aria-label` and `aria-labelledby`.
  * Ensures `aria-labelledby` points to existing IDs.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of ARIA label errors.

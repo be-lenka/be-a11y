@@ -5,6 +5,7 @@ const tinycolor = require("tinycolor2");
 /**
  * Evaluates inline styles for text/background color contrast ratio.
  * Flags contrast ratios below WCAG AA threshold (4.5).
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of contrast issues.

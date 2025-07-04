@@ -3,6 +3,7 @@ const getLineNumber = require("../utils/getLineNumber");
 
 /**
  * Checks that <iframe> elements have a non-empty, descriptive title attribute.
+ *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
  * @returns {object[]} List of iframe title issues.

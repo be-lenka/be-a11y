@@ -3,7 +3,7 @@ const path = require("path");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
 
-// SET OF RULES
+// Rules
 const headingOrder = require("./src/rules/headingOrder");
 const headingEmpty = require("./src/rules/headingEmpty");
 const altAttributes = require("./src/rules/altAttributes");
@@ -18,6 +18,10 @@ const labelsWithoutFor = require("./src/rules/labelsWithoutFor");
 const multipleH1 = require("./src/rules/multipleH1");
 const emptyLinks = require("./src/rules/emptyLinks");
 const unlabeledInputs = require("./src/rules/unlabeledInputs");
+
+// Utils
+const configuration = require("./src/utils/configuration");
+const { printErrors, printSummary } = require("./src/utils/logger");
 
 const allowedExtensions = [
   ".latte",
@@ -44,18 +48,7 @@ const excludedDirs = [
 const input = process.argv[2];
 const outputJson = process.argv[3];
 
-let config = {};
-
-try {
-  config = JSON.parse(fs.readFileSync("a11y.config.json", "utf-8"));
-} catch (err) {
-  console.warn(
-    chalk.yellow(
-      "⚠️  No config file found or invalid JSON. Using default rules.",
-    ),
-  );
-  config = { rules: {} }; // fallback to default: all enabled
-}
+let config = configuration("a11y.config.json");
 
 if (!input) {
   console.error(
@@ -89,80 +82,6 @@ function findFiles(dir) {
     if (allowedExtensions.includes(path.extname(entry.name))) return [fullPath];
     return [];
   });
-}
-
-/**
- * Groups an array of errors by their `type` property.
- * @param {object[]} errors - List of error objects.
- * @returns {object} Errors grouped by type.
- */
-function groupErrors(errors) {
-  return errors.reduce((acc, error) => {
-    if (!acc[error.type]) acc[error.type] = [];
-    acc[error.type].push(error);
-    return acc;
-  }, {});
-}
-
-/**
- * Prints detailed accessibility issues to the console.
- * Issues are grouped by type with color-coded headings.
- * @param {object[]} errors - List of error objects.
- */
-function printErrors(errors) {
-  const grouped = groupErrors(errors);
-
-  const typeLabels = {
-    "heading-order": chalk.yellow.bold("📐 Heading Order"),
-    "heading-empty": chalk.red.bold("❗ Empty Headings"),
-    "missing-alt": chalk.cyan.bold("🖼️  Missing ALT"),
-    "alt-empty": chalk.white.bold("⬜  AL T Empty"),
-    "alt-too-long": chalk.red.bold("↔️  ALT Too Long"),
-    "alt-decorative-incorrect": chalk.gray.bold("🌈  ALT Decorative"),
-    "alt-functional-empty": chalk.blueBright.bold("🔗  ALT Functional"),
-    "aria-invalid": chalk.magenta.bold("♿  ARIA Issues"),
-    "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
-    "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
-    "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
-    "contrast": chalk.red.bold("🎨  Contrast Issues"),
-    "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
-    "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
-    "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
-    "multiple-h1": chalk.yellow.bold("🧱  Multiple H1s"),
-    "input-unlabeled": chalk.magenta.bold("🔘  Unlabeled Checkboxes/Radios"),
-    "empty-link": chalk.red.bold("📭  Empty or Useless Link"),
-    "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
-    "link-new-tab-warning": chalk.yellow.bold("🧭  New Tab Warning"),
-  };
-
-  console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
-
-  for (const [type, list] of Object.entries(grouped)) {
-    const label = typeLabels[type] || chalk.white.bold(type);
-    console.log(`\n${label}`);
-    for (const { file, line, message } of list) {
-      console.log(
-        `  ${chalk.gray("-")} ${chalk.green(file)}:${chalk.yellow(
-          line,
-        )} – ${chalk.white(message)}`,
-      );
-    }
-  }
-}
-
-/**
- * Prints a summary table of accessibility issue counts by type.
- * @param {object[]} errors - List of error objects.
- */
-function printSummary(errors) {
-  const grouped = groupErrors(errors);
-  const summary = Object.entries(grouped).map(([type, list]) => ({
-    "Issue Type": type,
-    Count: list.length,
-  }));
-
-  console.log(chalk.bold("\n📊 Accessibility Checksum Summary:"));
-  console.table(summary);
 }
 
 /**
