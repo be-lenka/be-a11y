@@ -18,7 +18,7 @@
   "license": "MIT",
   "author": "BeLenka X Barebarics",
   "type": "commonjs",
-  "main": "check-headings-order.js",
+  "main": "index.js",
   "scripts": {
     "test": "npm install"
   },
