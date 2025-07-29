@@ -14,8 +14,8 @@ module.exports = function configuration(configFile) {
   } catch (err) {
     console.warn(chalk.yellow("⚠️  No config file found or invalid JSON. Using default rules."));
     config.rules = {};
-    // config.allowedExtensions = {};
-    // config.excludedDirs = {};
+    config.allowedExtensions = {};
+    config.excludedDirs = {};
   }
 
   config.rules ??= {};

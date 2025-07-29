@@ -2,6 +2,7 @@ const chalk = require("chalk");
 
 /**
  * Groups an array of errors by their `type` property.
+ *
  * @param {object[]} errors - List of error objects.
  * @returns {object} Errors grouped by type.
  */
@@ -16,6 +17,7 @@ function groupErrors(errors) {
 /**
  * Prints detailed accessibility issues to the console.
  * Issues are grouped by type with color-coded headings.
+ *
  * @param {object[]} errors - List of error objects.
  */
 function printErrors(errors) {
@@ -61,6 +63,7 @@ function printErrors(errors) {
 
 /**
  * Prints a summary table of accessibility issue counts by type.
+ *
  * @param {object[]} errors - List of error objects.
  */
 function printSummary(errors) {
@@ -74,5 +77,19 @@ function printSummary(errors) {
   console.table(summary);
 }
 
+/**
+ * Exports the full list of errors to a JSON file.
+ *
+ * @param {object[]} errors - List of error objects.
+ * @param {string} outputPath - Path to save the JSON file.
+ */
+function exportToJson(errors, outputPath) {
+  try {
+    fs.writeFileSync(outputPath, JSON.stringify(errors, null, 2), "utf-8");
+    console.log(chalk.blue(`📦 Results exported to ${outputPath}`));
+  } catch (err) {
+    console.error(chalk.red(`Failed to export JSON: ${err.message}`));
+  }
+}
 
-module.exports = { printErrors, printSummary }
+module.exports = { printErrors, printSummary, exportToJson }
