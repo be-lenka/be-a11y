@@ -11,7 +11,7 @@ inputs:
     default: ''
 runs:
   using: 'node20'
-  main: 'index.js'
+  main: 'dist/index.js'
 branding:
   icon: 'check-circle'
   color: 'purple'
