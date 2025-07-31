@@ -14,6 +14,11 @@ runs:
   steps:
     - name: Run be-a11y accessibility checker
       run: |
+        ls -la
+        echo "Running be-a11y on URL: ${{ inputs.url }}"
+        echo "Report path: ${{ inputs.report }}"
+        npm install
+        npm run build
         if [ -z "${{ inputs.report }}" ]; then
           node dist/index.js "${{ inputs.url }}"
         else
