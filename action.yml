@@ -12,6 +12,9 @@ inputs:
 runs:
   using: 'node20'
   main: 'dist/index.js'
+  args:
+    - ${{ inputs.url }}
+    - ${{ inputs.report }}
 branding:
   icon: 'check-circle'
   color: 'purple'
