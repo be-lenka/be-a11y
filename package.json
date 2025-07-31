@@ -24,6 +24,7 @@
     "build": "ncc build index.js -o dist"
   },
   "dependencies": {
+    "@actions/core": "^1.11.1",
     "be-a11y": "github:be-lenka/be-a11y",
     "chalk": "^4.1.2",
     "cheerio": "^1.0.0-rc.12",
