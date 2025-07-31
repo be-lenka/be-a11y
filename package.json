@@ -1,6 +1,6 @@
 {
   "name": "@belenkadev/be-a11y",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "description": "Web accesibility tools",
   "keywords": [
     "js",
@@ -20,15 +20,16 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "test": "npm install"
+    "test": "npm install",
+    "build": "ncc build index.js -o dist"
   },
   "dependencies": {
     "be-a11y": "github:be-lenka/be-a11y",
     "chalk": "^4.1.2",
+    "cheerio": "^1.0.0-rc.12",
     "css": "^3.0.0",
     "node-fetch": "^2.7.0",
-    "tinycolor2": "^1.6.0",
-    "cheerio": "^1.0.0-rc.12"
+    "tinycolor2": "^1.6.0"
   },
   "bin": {
     "be-a11y": "index.js"
@@ -36,5 +37,7 @@
   "directories": {
     "doc": "docs"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3"
+  }
 }
