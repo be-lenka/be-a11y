@@ -92409,38 +92409,24 @@ const excludedDirs = [
 
 // If running in GitHub Actions, use @actions/core to get inputs
 let input, outputJson;
-let coreAvailable = false;
 
 // Dynamically require @actions/core if available
-  coreAvailable = true;
-  input = core.getInput("url") || core.getInput("input") || "";
-  outputJson = core.getInput("report") || "";
+input = core.getInput("url") || core.getInput("input") || "";
+outputJson = core.getInput("report") || "";
 
-  console.log(core.getInput("url"));
-
-  console.log(chalk.blue("Running in GitHub Actions environment"));
-  if (input) {
-    console.log(chalk.blue(`Input URL or directory: ${input}`));
-  }
-  if (outputJson) {
-    console.log(chalk.blue(`Output JSON file: ${outputJson}`));
-  }
-
-if (!input || !outputJson) {
-  console.log(chalk.yellow("Running outside GitHub Actions, using CLI arguments"));
-  // fallback to CLI arguments for local/testing use
+// Fallback to CLI arguments for local/testing use
+if (!input) {
   input = process.argv[2];
-  outputJson = process.argv[3];
+  if (!outputJson) {
+    outputJson = process.argv[3];
+  }
 }
-
-console.log(input, outputJson);
-
 
 let config = configuration("a11y.config.json");
 
 if (!input) {
   console.error(
-    chalk.red("Please provide a directory path or URL as the first argument."),
+    chalk.red("Please provide a directory path or URL as the first argument.")
   );
   process.exit(1);
 }
@@ -92507,7 +92493,9 @@ async function analyzeContent(content, label) {
     ...(shouldRun("multiple-h1") ? multipleH1(content, label) : []),
     ...(shouldRun("heading-order") ? headingOrder(content, label) : []),
     ...(shouldRun("heading-empty") ? headingEmpty(content, label) : []),
-    ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, label) : []),
+    ...(shouldRun("link-new-tab-warning")
+      ? linksOpenNewTab(content, label)
+      : []),
   ];
 
   if (errors.length > 0) {
@@ -92538,19 +92526,27 @@ async function analyzeContent(content, label) {
       const content = fs.readFileSync(file, "utf-8");
 
       allErrors.push(
-        ...(shouldRun("alt-attributes") ? altAttributes(content, file, config) : []),
+        ...(shouldRun("alt-attributes")
+          ? altAttributes(content, file, config)
+          : []),
         ...(shouldRun("aria-invalid") ? ariaLabels(content, file) : []),
         ...(shouldRun("missing-aria") ? missingAria(content, file) : []),
         ...(shouldRun("contrast") ? contrast(content, file) : []),
         ...(shouldRun("aria-role-invalid") ? ariaRoles(content, file) : []),
-        ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, file) : []),
+        ...(shouldRun("label-missing-for")
+          ? labelsWithoutFor(content, file)
+          : []),
         ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, file) : []),
         ...(shouldRun("empty-link") ? emptyLinks(content, file) : []),
-        ...(shouldRun("iframe-title-missing") ? iframeTitles(content, file) : []),
+        ...(shouldRun("iframe-title-missing")
+          ? iframeTitles(content, file)
+          : []),
         ...(shouldRun("multiple-h1") ? multipleH1(content, file) : []),
         ...(shouldRun("heading-order") ? headingOrder(content, file) : []),
         ...(shouldRun("heading-empty") ? headingEmpty(content, file) : []),
-        ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, file) : []),
+        ...(shouldRun("link-new-tab-warning")
+          ? linksOpenNewTab(content, file)
+          : [])
         // ...(shouldRun("missing-landmark") ? landmarkRoles(content, file) : []),
       );
     }

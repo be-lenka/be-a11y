@@ -48,33 +48,18 @@ const excludedDirs = [
 
 // If running in GitHub Actions, use @actions/core to get inputs
 let input, outputJson;
-let coreAvailable = false;
 
 // Dynamically require @actions/core if available
-coreAvailable = true;
 input = core.getInput("url") || core.getInput("input") || "";
 outputJson = core.getInput("report") || "";
 
-console.log(core.getInput("url"));
-console.log(chalk.blue("Running in GitHub Actions environment"));
-
-if (input) {
-  console.log(chalk.blue(`Input URL or directory: ${input}`));
-}
-if (outputJson) {
-  console.log(chalk.blue(`Output JSON file: ${outputJson}`));
-}
-
-if (!input || !outputJson) {
-  console.log(
-    chalk.yellow("Running outside GitHub Actions, using CLI arguments")
-  );
-  // fallback to CLI arguments for local/testing use
+// Fallback to CLI arguments for local/testing use
+if (!input) {
   input = process.argv[2];
-  outputJson = process.argv[3];
+  if (!outputJson) {
+    outputJson = process.argv[3];
+  }
 }
-
-console.log(input, outputJson);
 
 let config = configuration("a11y.config.json");
 
