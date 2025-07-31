@@ -45,8 +45,20 @@ const excludedDirs = [
   "bin",
 ];
 
-const input = process.argv[2];
-const outputJson = process.argv[3];
+// If running in GitHub Actions, use @actions/core to get inputs
+let input, outputJson;
+let coreAvailable = false;
+try {
+  // Dynamically require @actions/core if available
+  const core = require("@actions/core");
+  coreAvailable = true;
+  input = core.getInput("url") || core.getInput("input") || "";
+  outputJson = core.getInput("report") || "";
+} catch (e) {
+  // fallback to CLI arguments for local/testing use
+  input = process.argv[2];
+  outputJson = process.argv[3];
+}
 
 let config = configuration("a11y.config.json");
 
