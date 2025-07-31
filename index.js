@@ -54,11 +54,24 @@ try {
   coreAvailable = true;
   input = core.getInput("url") || core.getInput("input") || "";
   outputJson = core.getInput("report") || "";
+
+  console.log(core.getInput("url"));
+
+  console.log(chalk.blue("Running in GitHub Actions environment"));
+  if (input) {
+    console.log(chalk.blue(`Input URL or directory: ${input}`));
+  }
+  if (outputJson) {
+    console.log(chalk.blue(`Output JSON file: ${outputJson}`));
+  }
 } catch (e) {
   // fallback to CLI arguments for local/testing use
   input = process.argv[2];
   outputJson = process.argv[3];
 }
+
+console.log(input, outputJson);
+
 
 let config = configuration("a11y.config.json");
 
