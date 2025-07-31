@@ -10,11 +10,16 @@ inputs:
     required: false
     default: ''
 runs:
-  using: 'node20'
-  main: 'dist/index.js'
-  args:
-    - ${{ inputs.url }}
-    - ${{ inputs.report }}
+  using: "composite"
+  steps:
+    - name: Run be-a11y accessibility checker
+      run: |
+        if [ -z "${{ inputs.report }}" ]; then
+          node dist/index.js "${{ inputs.url }}"
+        else
+          node dist/index.js "${{ inputs.url }}" "${{ inputs.report }}"
+        fi
+      shell: bash
 branding:
   icon: 'check-circle'
   color: 'purple'
