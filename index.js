@@ -22,7 +22,8 @@ const unlabeledInputs = require("./src/rules/unlabeledInputs");
 
 // Utils
 const configuration = require("./src/utils/configuration");
-const { printErrors, printSummary } = require("./src/utils/logger");
+const shouldRun = require("./src/utils/runner");
+const { printErrors, printSummary, exportToJson } = require("./src/utils/logger");
 
 const allowedExtensions = [
   ".latte",
@@ -71,16 +72,9 @@ if (!input) {
 }
 
 /**
- * Determines if a rule should run based on configuration.
- * Defaults to enabled unless explicitly set to false.
- * @param {string} rule - Rule name from config.rules keys.
- * @returns {boolean} Whether the rule is enabled.
- */
-const shouldRun = (rule) => config.rules[rule] !== false;
-
-/**
  * Recursively finds files with allowed extensions in a directory.
  * Ignores directories listed in `excludedDirs`.
+ *
  * @param {string} dir - Directory path to search.
  * @returns {string[]} Array of matched file paths.
  */
@@ -98,43 +92,28 @@ function findFiles(dir) {
 }
 
 /**
- * Exports the full list of errors to a JSON file.
- * @param {object[]} errors - List of error objects.
- * @param {string} outputPath - Path to save the JSON file.
- */
-function exportToJson(errors, outputPath) {
-  try {
-    fs.writeFileSync(outputPath, JSON.stringify(errors, null, 2), "utf-8");
-    console.log(chalk.blue(`📦 Results exported to ${outputPath}`));
-  } catch (err) {
-    console.error(chalk.red(`Failed to export JSON: ${err.message}`));
-  }
-}
-
-/**
  * Runs all accessibility checks on a single HTML content string.
  * Used for analyzing remote HTML via URL input.
+ *
  * @param {string} content - Raw HTML string.
  * @param {string} label - Display name (usually file path or URL).
  */
 async function analyzeContent(content, label) {
   const errors = [
-    ...(shouldRun("alt-attributes") ? altAttributes(content, label) : []),
-    ...(shouldRun("aria-invalid") ? ariaLabels(content, label) : []),
-    ...(shouldRun("missing-aria") ? missingAria(content, label) : []),
-    ...(shouldRun("contrast") ? contrast(content, label) : []),
-    ...(shouldRun("aria-role-invalid") ? ariaRoles(content, label) : []),
-    ...(shouldRun("missing-landmark") ? landmarkRoles(content, label) : []),
-    ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, label) : []),
-    ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, label) : []),
-    ...(shouldRun("empty-link") ? emptyLinks(content, label) : []),
-    ...(shouldRun("iframe-title-missing") ? iframeTitles(content, label) : []),
-    ...(shouldRun("multiple-h1") ? multipleH1(content, label) : []),
-    ...(shouldRun("heading-order") ? headingOrder(content, label) : []),
-    ...(shouldRun("heading-empty") ? headingEmpty(content, label) : []),
-    ...(shouldRun("link-new-tab-warning")
-      ? linksOpenNewTab(content, label)
-      : []),
+    ...(shouldRun(config, "alt-attributes") ? altAttributes(content, label) : []),
+    ...(shouldRun(config, "aria-invalid") ? ariaLabels(content, label) : []),
+    ...(shouldRun(config, "missing-aria") ? missingAria(content, label) : []),
+    ...(shouldRun(config, "contrast") ? contrast(content, label) : []),
+    ...(shouldRun(config, "aria-role-invalid") ? ariaRoles(content, label) : []),
+    ...(shouldRun(config, "missing-landmark") ? landmarkRoles(content, label) : []),
+    ...(shouldRun(config, "label-missing-for") ? labelsWithoutFor(content, label) : []),
+    ...(shouldRun(config, "input-unlabeled") ? unlabeledInputs(content, label) : []),
+    ...(shouldRun(config, "empty-link") ? emptyLinks(content, label) : []),
+    ...(shouldRun(config, "iframe-title-missing") ? iframeTitles(content, label) : []),
+    ...(shouldRun(config, "multiple-h1") ? multipleH1(content, label) : []),
+    ...(shouldRun(config, "heading-order") ? headingOrder(content, label) : []),
+    ...(shouldRun(config, "heading-empty") ? headingEmpty(content, label) : []),
+    ...(shouldRun(config, "link-new-tab-warning") ? linksOpenNewTab(content, label) : []),
   ];
 
   if (errors.length > 0) {
@@ -165,28 +144,20 @@ async function analyzeContent(content, label) {
       const content = fs.readFileSync(file, "utf-8");
 
       allErrors.push(
-        ...(shouldRun("alt-attributes")
-          ? altAttributes(content, file, config)
-          : []),
-        ...(shouldRun("aria-invalid") ? ariaLabels(content, file) : []),
-        ...(shouldRun("missing-aria") ? missingAria(content, file) : []),
-        ...(shouldRun("contrast") ? contrast(content, file) : []),
-        ...(shouldRun("aria-role-invalid") ? ariaRoles(content, file) : []),
-        ...(shouldRun("label-missing-for")
-          ? labelsWithoutFor(content, file)
-          : []),
-        ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, file) : []),
-        ...(shouldRun("empty-link") ? emptyLinks(content, file) : []),
-        ...(shouldRun("iframe-title-missing")
-          ? iframeTitles(content, file)
-          : []),
-        ...(shouldRun("multiple-h1") ? multipleH1(content, file) : []),
-        ...(shouldRun("heading-order") ? headingOrder(content, file) : []),
-        ...(shouldRun("heading-empty") ? headingEmpty(content, file) : []),
-        ...(shouldRun("link-new-tab-warning")
-          ? linksOpenNewTab(content, file)
-          : [])
-        // ...(shouldRun("missing-landmark") ? landmarkRoles(content, file) : []),
+        ...(shouldRun(config, "alt-attributes") ? altAttributes(content, file, config) : []),
+        ...(shouldRun(config, "aria-invalid") ? ariaLabels(content, file) : []),
+        ...(shouldRun(config, "missing-aria") ? missingAria(content, file) : []),
+        ...(shouldRun(config, "contrast") ? contrast(content, file) : []),
+        ...(shouldRun(config, "aria-role-invalid") ? ariaRoles(content, file) : []),
+        ...(shouldRun(config, "label-missing-for") ? labelsWithoutFor(content, file) : []),
+        ...(shouldRun(config, "input-unlabeled") ? unlabeledInputs(content, file) : []),
+        ...(shouldRun(config, "empty-link") ? emptyLinks(content, file) : []),
+        ...(shouldRun(config, "iframe-title-missing") ? iframeTitles(content, file) : []),
+        ...(shouldRun(config, "multiple-h1") ? multipleH1(content, file) : []),
+        ...(shouldRun(config, "heading-order") ? headingOrder(content, file) : []),
+        ...(shouldRun(config, "heading-empty") ? headingEmpty(content, file) : []),
+        ...(shouldRun(config, "link-new-tab-warning") ? linksOpenNewTab(content, file) : []),
+        // ...(shouldRun(config, "missing-landmark") ? landmarkRoles(content, file) : []),
       );
     }
 

@@ -27,7 +27,7 @@
     "@actions/core": "^1.11.1",
     "be-a11y": "github:be-lenka/be-a11y",
     "chalk": "^4.1.2",
-    "cheerio": "^1.0.0-rc.12",
+    "cheerio": "^1.1.0",
     "css": "^3.0.0",
     "node-fetch": "^2.7.0",
     "tinycolor2": "^1.6.0"
