@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
+const core = require("@actions/core");
 
 // Rules
 const headingOrder = require("./src/rules/headingOrder");
@@ -46,14 +47,26 @@ const excludedDirs = [
   "bin",
 ];
 
-const input = process.argv[2];
-const outputJson = process.argv[3];
+// If running in GitHub Actions, use @actions/core to get inputs
+let input, outputJson;
+
+// Dynamically require @actions/core if available
+input = core.getInput("url") || core.getInput("input") || "";
+outputJson = core.getInput("report") || "";
+
+// Fallback to CLI arguments for local/testing use
+if (!input) {
+  input = process.argv[2];
+  if (!outputJson) {
+    outputJson = process.argv[3];
+  }
+}
 
 let config = configuration("a11y.config.json");
 
 if (!input) {
   console.error(
-    chalk.red("Please provide a directory path or URL as the first argument."),
+    chalk.red("Please provide a directory path or URL as the first argument.")
   );
   process.exit(1);
 }

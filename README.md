@@ -90,6 +90,46 @@ node index.js /path/to/html/files report.json
 node index.js https://example.com report.json
 ```
 
+### Github Action:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL or path'
+        required: true
+        default: '.'
+      report:
+        description: 'Path to report.json'
+        required: false
+        default: 'report.json'
+
+jobs:
+  accessibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: be-a11y Accessibility Checker
+        id: a11ychecker
+        uses: be-lenka/be-a11y@v2.2.8
+        continue-on-error: true
+        with:
+          url: ${{ github.event.inputs.url }}
+          report: ${{ github.event.inputs.report }}
+
+      - name: Upload accessibility report artifact
+        if: steps.a11ychecker.outcome != 'success' && ${{ github.event.inputs.report != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: ${{ github.event.inputs.report }}
+
+      - name: Output artifact ID
+        run:  echo 'Artifact ID is ${{ steps.artifact-upload-step.outputs.artifact-id }}'
+```
+
 ### Example Configuration (`a11y.config.json`):
 
 ```json
