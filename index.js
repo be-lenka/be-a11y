@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const chalk = require("chalk");
 const fetch = require("node-fetch"); // v2 for CommonJS
+const core = require("@actions/core");
 
 // Rules
 const headingOrder = require("./src/rules/headingOrder");
@@ -45,14 +46,26 @@ const excludedDirs = [
   "bin",
 ];
 
-const input = process.argv[2];
-const outputJson = process.argv[3];
+// If running in GitHub Actions, use @actions/core to get inputs
+let input, outputJson;
+
+// Dynamically require @actions/core if available
+input = core.getInput("url") || core.getInput("input") || "";
+outputJson = core.getInput("report") || "";
+
+// Fallback to CLI arguments for local/testing use
+if (!input) {
+  input = process.argv[2];
+  if (!outputJson) {
+    outputJson = process.argv[3];
+  }
+}
 
 let config = configuration("a11y.config.json");
 
 if (!input) {
   console.error(
-    chalk.red("Please provide a directory path or URL as the first argument."),
+    chalk.red("Please provide a directory path or URL as the first argument.")
   );
   process.exit(1);
 }
@@ -119,7 +132,9 @@ async function analyzeContent(content, label) {
     ...(shouldRun("multiple-h1") ? multipleH1(content, label) : []),
     ...(shouldRun("heading-order") ? headingOrder(content, label) : []),
     ...(shouldRun("heading-empty") ? headingEmpty(content, label) : []),
-    ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, label) : []),
+    ...(shouldRun("link-new-tab-warning")
+      ? linksOpenNewTab(content, label)
+      : []),
   ];
 
   if (errors.length > 0) {
@@ -150,19 +165,27 @@ async function analyzeContent(content, label) {
       const content = fs.readFileSync(file, "utf-8");
 
       allErrors.push(
-        ...(shouldRun("alt-attributes") ? altAttributes(content, file, config) : []),
+        ...(shouldRun("alt-attributes")
+          ? altAttributes(content, file, config)
+          : []),
         ...(shouldRun("aria-invalid") ? ariaLabels(content, file) : []),
         ...(shouldRun("missing-aria") ? missingAria(content, file) : []),
         ...(shouldRun("contrast") ? contrast(content, file) : []),
         ...(shouldRun("aria-role-invalid") ? ariaRoles(content, file) : []),
-        ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, file) : []),
+        ...(shouldRun("label-missing-for")
+          ? labelsWithoutFor(content, file)
+          : []),
         ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, file) : []),
         ...(shouldRun("empty-link") ? emptyLinks(content, file) : []),
-        ...(shouldRun("iframe-title-missing") ? iframeTitles(content, file) : []),
+        ...(shouldRun("iframe-title-missing")
+          ? iframeTitles(content, file)
+          : []),
         ...(shouldRun("multiple-h1") ? multipleH1(content, file) : []),
         ...(shouldRun("heading-order") ? headingOrder(content, file) : []),
         ...(shouldRun("heading-empty") ? headingEmpty(content, file) : []),
-        ...(shouldRun("link-new-tab-warning") ? linksOpenNewTab(content, file) : []),
+        ...(shouldRun("link-new-tab-warning")
+          ? linksOpenNewTab(content, file)
+          : [])
         // ...(shouldRun("missing-landmark") ? landmarkRoles(content, file) : []),
       );
     }
