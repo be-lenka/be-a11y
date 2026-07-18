@@ -1,21 +1,45 @@
 {
   "rules": {
-    "heading-order": true,
-    "heading-empty": true,
     "alt-attributes": true,
     "redundant-title": true,
+    "alt-too-long": true,
     "aria-invalid": true,
-    "missing-aria": true,
     "aria-role-invalid": true,
-    "missing-landmark": false,
     "contrast": true,
+    "empty-link": true,
+    "heading-empty": true,
+    "heading-order": true,
+    "iframe-title-missing": true,
     "label-missing-for": true,
-    "duplicate-id": true,
+    "missing-landmark": true,
+    "link-new-tab-warning": true,
+    "missing-aria": true,
     "multiple-h1": true,
     "input-unlabeled": true,
-    "empty-link": true,
-    "iframe-title-missing": true,
-    "link-new-tab-warning": true
+    "html-lang": true,
+    "document-title": true,
+    "duplicate-id": true,
+    "empty-button": true,
+    "tabindex-positive": true,
+    "meta-viewport": true,
+    "table-headers": true,
+    "meta-refresh": true,
+    "skip-link": true,
+    "fieldset-legend": true,
+    "autocomplete-valid": true,
+    "list-structure": true,
+    "media-captions": true,
+    "accesskey-duplicate": true,
+    "deprecated-elements": true
+  },
+  "options": {
+    "alt-attributes": {
+      "maxLength": 125
+    },
+    "link-new-tab": {
+      "phrases": [],
+      "extraClasses": []
+    }
   },
   "allowedExtensions": {
     ".latte": true,

@@ -266,6 +266,216 @@ const rules = [
       },
     },
   },
+  {
+    id: "html-lang",
+    description: "The document's <html> must declare a valid lang",
+    check: require("./rules/htmlLang"),
+    types: {
+      "html-lang": {
+        severity: "error",
+        wcag: ["3.1.1"],
+        hint: 'Add a valid BCP-47 lang to <html> (e.g. lang="en").',
+        label: "HTML Lang",
+        emoji: "🌐",
+      },
+    },
+  },
+  {
+    id: "document-title",
+    description: "A document must have a non-empty <title>",
+    check: require("./rules/documentTitle"),
+    types: {
+      "document-title": {
+        severity: "error",
+        wcag: ["2.4.2"],
+        hint: "Add a concise, descriptive <title> inside <head>.",
+        label: "Document Title",
+        emoji: "📄",
+      },
+    },
+  },
+  {
+    id: "duplicate-id",
+    description: "id attributes must be unique within a document",
+    check: require("./rules/duplicateId"),
+    types: {
+      "duplicate-id": {
+        severity: "error",
+        wcag: ["4.1.1"],
+        hint: "Make the id unique; duplicate ids break label/aria references and scripting.",
+        label: "Duplicate ID",
+        emoji: "🆔",
+      },
+    },
+  },
+  {
+    id: "empty-button",
+    description: "Buttons must have an accessible name",
+    check: require("./rules/emptyButton"),
+    types: {
+      "empty-button": {
+        severity: "error",
+        wcag: ["4.1.2"],
+        hint: "Give the button text content, an aria-label, or (for input) a value.",
+        label: "Empty Button",
+        emoji: "🔳",
+      },
+    },
+  },
+  {
+    id: "tabindex-positive",
+    description: "Avoid positive tabindex values",
+    check: require("./rules/tabindexPositive"),
+    types: {
+      "tabindex-positive": {
+        severity: "warning",
+        wcag: ["2.4.3"],
+        hint: "Use tabindex=\"0\" or \"-1\"; positive values override and break the natural focus order.",
+        label: "Positive Tabindex",
+        emoji: "🔢",
+      },
+    },
+  },
+  {
+    id: "meta-viewport",
+    description: "The viewport meta must not disable zoom",
+    check: require("./rules/metaViewport"),
+    types: {
+      "meta-viewport": {
+        severity: "error",
+        wcag: ["1.4.4"],
+        hint: "Remove user-scalable=no and any maximum-scale below 2 so users can zoom.",
+        label: "Viewport Zoom",
+        emoji: "🔍",
+      },
+    },
+  },
+  {
+    id: "table-headers",
+    description: "Data tables should have header cells",
+    check: require("./rules/tableHeaders"),
+    types: {
+      "table-headers": {
+        severity: "warning",
+        wcag: ["1.3.1"],
+        hint: 'Add <th> header cells (with scope), or role="presentation" for a layout table.',
+        label: "Table Headers",
+        emoji: "🧮",
+      },
+    },
+  },
+  {
+    id: "meta-refresh",
+    description: "Avoid timed meta refresh/redirect",
+    check: require("./rules/metaRefresh"),
+    types: {
+      "meta-refresh": {
+        severity: "error",
+        wcag: ["2.2.1"],
+        hint: "Remove the timed meta refresh; if a redirect is needed, do it server-side.",
+        label: "Meta Refresh",
+        emoji: "⏱️",
+      },
+    },
+  },
+  {
+    id: "skip-link",
+    description: "A page should offer a way to skip to main content",
+    check: require("./rules/skipLink"),
+    types: {
+      "skip-link": {
+        severity: "warning",
+        wcag: ["2.4.1"],
+        hint: "Add a skip link, a <main> landmark, or an <h1> so users can reach the main content.",
+        label: "Skip Link",
+        emoji: "⏭️",
+      },
+    },
+  },
+  {
+    id: "fieldset-legend",
+    description: "Grouped controls need a fieldset/legend or named group",
+    check: require("./rules/fieldsetLegend"),
+    types: {
+      "fieldset-legend": {
+        severity: "warning",
+        wcag: ["1.3.1", "3.3.2"],
+        hint: "Wrap related radios/checkboxes in a <fieldset> with a <legend> describing the group.",
+        label: "Fieldset Legend",
+        emoji: "📋",
+      },
+    },
+  },
+  {
+    id: "autocomplete-valid",
+    description: "autocomplete must use valid autofill tokens",
+    check: require("./rules/autocompleteValid"),
+    types: {
+      "autocomplete-valid": {
+        severity: "error",
+        wcag: ["1.3.5"],
+        hint: "Use a valid WHATWG autofill token (e.g. email, given-name, cc-number).",
+        label: "Autocomplete",
+        emoji: "🧾",
+      },
+    },
+  },
+  {
+    id: "list-structure",
+    description: "Lists must follow their HTML content model",
+    check: require("./rules/listStructure"),
+    types: {
+      "list-structure": {
+        severity: "error",
+        wcag: ["1.3.1"],
+        hint: "Only <li> may be a direct child of <ul>/<ol>; only <dt>/<dd>/<div> inside <dl>.",
+        label: "List Structure",
+        emoji: "📃",
+      },
+    },
+  },
+  {
+    id: "media-captions",
+    description: "Video/audio need captions or a transcript",
+    check: require("./rules/mediaCaptions"),
+    types: {
+      "media-captions": {
+        severity: "warning",
+        wcag: ["1.2.2"],
+        hint: 'Add a <track kind="captions"> to video and a transcript for audio.',
+        label: "Media Captions",
+        emoji: "🎬",
+      },
+    },
+  },
+  {
+    id: "accesskey-duplicate",
+    description: "accesskey values must be unique",
+    check: require("./rules/accesskeyDuplicate"),
+    types: {
+      "accesskey-duplicate": {
+        severity: "warning",
+        wcag: [],
+        hint: "Give each accesskey a unique value, or remove the duplicates.",
+        label: "Duplicate Accesskey",
+        emoji: "⌨️",
+      },
+    },
+  },
+  {
+    id: "deprecated-elements",
+    description: "Deprecated, inaccessible elements must not be used",
+    check: require("./rules/deprecatedElements"),
+    types: {
+      "deprecated-elements": {
+        severity: "error",
+        wcag: ["2.2.2"],
+        hint: "Remove <marquee>/<blink>; use CSS animation with a reduced-motion opt-out if motion is essential.",
+        label: "Deprecated Element",
+        emoji: "🗑️",
+      },
+    },
+  },
 ];
 
 /**
