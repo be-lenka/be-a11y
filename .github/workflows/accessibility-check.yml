@@ -27,7 +27,8 @@ jobs:
 
       - name: 🚦 CLI smoke — violations fixture must fail (exit 1)
         run: |
-          node index.js test/fixtures/violations > /dev/null 2>&1; code=$?
+          code=0
+          node index.js test/fixtures/violations > /dev/null 2>&1 || code=$?
           test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
 
       - name: ✅ CLI smoke — clean fixture must pass (exit 0) and write a report
@@ -37,7 +38,8 @@ jobs:
 
       - name: 📦 Bundle smoke — dist/index.js must fail on violations (exit 1)
         run: |
-          node dist/index.js test/fixtures/violations > /dev/null 2>&1; code=$?
+          code=0
+          node dist/index.js test/fixtures/violations > /dev/null 2>&1 || code=$?
           test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
 
       - name: 🔁 dist/ must be freshly built from source
