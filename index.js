@@ -308,10 +308,14 @@ async function emitActionOutputs(report, reportPath) {
   }
 }
 
-/** Writes a message and the usage block to a stream. */
+/**
+ * Reports a usage/environment error and sets exit code 2. Returns undefined so
+ * callers can `return fail(...)`. We set process.exitCode rather than calling
+ * process.exit() so buffered stdout/stderr is flushed before the process ends.
+ */
 function fail(message) {
   process.stderr.write(`${chalk.red(message)}\n\n${USAGE}`);
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 async function main() {
@@ -325,12 +329,12 @@ async function main() {
 
   if (flags.help) {
     process.stdout.write(USAGE);
-    process.exit(0);
+    return;
   }
 
   if (flags.listRules) {
     process.stdout.write(`${JSON.stringify(buildRuleList(), null, 2)}\n`);
-    process.exit(0);
+    return;
   }
 
   const config = loadConfig();
@@ -387,7 +391,9 @@ async function main() {
     await emitActionOutputs(report, reportPath);
   }
 
-  process.exit(issues.length > 0 ? 1 : 0);
+  // Set exitCode (not process.exit) so stdout — which may be a large piped JSON
+  // report — is fully flushed before the process ends.
+  process.exitCode = issues.length > 0 ? 1 : 0;
 }
 
 module.exports = {
@@ -403,6 +409,6 @@ module.exports = {
 if (require.main === module) {
   main().catch((err) => {
     process.stderr.write(chalk.red(`Unexpected error: ${err.stack || err.message}\n`));
-    process.exit(2);
+    process.exitCode = 2;
   });
 }
