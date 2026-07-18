@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
@@ -78104,6 +78105,427 @@ module.exports = require("zlib");
 
 /***/ }),
 
+/***/ 1805:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const fs = __nccwpck_require__(9896);
+const path = __nccwpck_require__(6928);
+const chalk = __nccwpck_require__(465);
+const fetch = __nccwpck_require__(6705); // v2 for CommonJS
+const core = __nccwpck_require__(7484);
+
+const { rules, typeMeta } = __nccwpck_require__(7773);
+const loadConfig = __nccwpck_require__(6564);
+const { printErrors, printSummary } = __nccwpck_require__(1284);
+const pkg = __nccwpck_require__(8330);
+
+const SCHEMA_VERSION = 2;
+
+// ---------------------------------------------------------------------------
+// Node API — pure functions: no process.exit, no stdout. Diagnostics (rule
+// crashes, unknown types) go to stderr only, so require()-ing this module never
+// executes the CLI or writes a report.
+// ---------------------------------------------------------------------------
+
+const warnedUnknownTypes = new Set();
+
+/** Trimmed source line at `line`, capped at 120 chars, or null. */
+function snippetAt(lines, line) {
+  if (typeof line !== "number" || line < 1) return null;
+  const raw = lines[line - 1];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  return trimmed.length > 120 ? `${trimmed.slice(0, 120)}…` : trimmed;
+}
+
+/** Enriches a raw rule issue with registry metadata + a source snippet. */
+function enrichIssue(issue, lines) {
+  const meta = typeMeta[issue.type];
+  if (!meta && !warnedUnknownTypes.has(issue.type)) {
+    warnedUnknownTypes.add(issue.type);
+    process.stderr.write(
+      chalk.yellow(
+        `⚠️  Unknown issue type "${issue.type}" emitted by a rule — not in the registry.\n`
+      )
+    );
+  }
+  const enriched = {
+    file: issue.file,
+    line: issue.line,
+    type: issue.type,
+    message: issue.message,
+    ruleId: meta ? meta.ruleId : null,
+    severity: meta ? meta.severity : "error",
+    wcag: meta ? meta.wcag : [],
+    hint: meta ? meta.hint : null,
+    snippet: snippetAt(lines, issue.line),
+  };
+  if (issue.column != null) enriched.column = issue.column;
+  return enriched;
+}
+
+/** Stable ordering: file, then line, then type. */
+function compareIssues(a, b) {
+  if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+  if (a.line !== b.line) return (a.line || 0) - (b.line || 0);
+  return a.type < b.type ? -1 : a.type > b.type ? 1 : 0;
+}
+
+/**
+ * Runs every enabled rule over one document and returns enriched issues.
+ * This is THE runner: per-rule try/catch (a crash is logged to stderr and the
+ * rule skipped — no synthetic issue), type-level post-filtering, enrichment,
+ * and sorting.
+ *
+ * @param {string} content - Raw HTML/template source.
+ * @param {string} label - Display name (file path or URL).
+ * @param {object} [config] - Normalized config (rules/options).
+ * @returns {object[]} Enriched issue objects.
+ */
+function analyzeContent(content, label, config = {}) {
+  const rulesConfig = (config && config.rules) || {};
+  const raw = [];
+
+  for (const rule of rules) {
+    if (rulesConfig[rule.id] === false) continue;
+    let produced;
+    try {
+      produced = rule.check(content, label, config) || [];
+    } catch (err) {
+      process.stderr.write(
+        chalk.yellow(
+          `⚠️  Rule "${rule.id}" crashed on ${label} — skipped (${err.message})\n`
+        )
+      );
+      continue;
+    }
+    for (const issue of produced) raw.push(issue);
+  }
+
+  const lines = content.split("\n");
+  const enriched = raw
+    .filter((issue) => rulesConfig[issue.type] !== false)
+    .map((issue) => enrichIssue(issue, lines));
+  enriched.sort(compareIssues);
+  return enriched;
+}
+
+/**
+ * Recursively collects scannable files under `dir`, honoring the config's
+ * allowed extensions and excluded directories. Entries are sorted for
+ * deterministic output.
+ */
+function findFiles(dir, config) {
+  const allowed = config.allowedExtensions || loadConfig.DEFAULT_ALLOWED_EXTENSIONS;
+  const excluded = new Set(config.excludedDirs || loadConfig.DEFAULT_EXCLUDED_DIRS);
+  const entries = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (excluded.has(entry.name)) continue;
+      files.push(...findFiles(fullPath, config));
+    } else if (allowed.includes(path.extname(entry.name))) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+/**
+ * Scans a directory (recursive) or a single file. Directory walks honor
+ * config-driven extensions/exclusions; an explicit single file is scanned
+ * regardless of extension. A non-existent path throws (ENOENT).
+ *
+ * @param {string} targetPath - Directory or file path.
+ * @param {object} [config] - Normalized config.
+ * @returns {{ issues: object[], filesScanned: number }}
+ */
+function scanPath(targetPath, config = {}) {
+  const stat = fs.statSync(targetPath); // throws ENOENT for bad paths
+  const files = stat.isDirectory() ? findFiles(targetPath, config) : [targetPath];
+
+  const issues = [];
+  for (const file of files) {
+    const content = fs.readFileSync(file, "utf-8");
+    issues.push(...analyzeContent(content, file, config));
+  }
+  issues.sort(compareIssues);
+  return { issues, filesScanned: files.length };
+}
+
+/**
+ * Fetches a URL and scans its HTML. Throws on network failure and on a non-OK
+ * HTTP status (so an error page is never silently audited).
+ *
+ * @param {string} url - http(s) URL.
+ * @param {object} [config] - Normalized config.
+ * @returns {Promise<{ issues: object[], filesScanned: number }>}
+ */
+async function scanUrl(url, config = {}) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} while fetching ${url}`);
+  }
+  const html = await res.text();
+  const issues = analyzeContent(html, url, config);
+  return { issues, filesScanned: 1 };
+}
+
+/** Summarizes issues: totals, error/warning split, and a sorted byType map. */
+function summarize(issues, filesScanned) {
+  const byType = {};
+  let errors = 0;
+  let warnings = 0;
+  for (const issue of issues) {
+    byType[issue.type] = (byType[issue.type] || 0) + 1;
+    if (issue.severity === "warning") warnings++;
+    else errors++;
+  }
+  const sortedByType = {};
+  for (const key of Object.keys(byType).sort()) sortedByType[key] = byType[key];
+  return {
+    filesScanned: filesScanned ?? null,
+    total: issues.length,
+    errors,
+    warnings,
+    byType: sortedByType,
+  };
+}
+
+/**
+ * Builds the schema-v2 JSON report document.
+ *
+ * @param {object[]} issues - Enriched issues.
+ * @param {object} [meta] - { target, filesScanned, timestamp }.
+ * @returns {object} Report document.
+ */
+function buildReport(issues, meta = {}) {
+  const sorted = [...issues].sort(compareIssues);
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    tool: { name: pkg.name, version: pkg.version },
+    target: meta.target != null ? meta.target : null,
+    timestamp: meta.timestamp || new Date().toISOString(),
+    summary: summarize(sorted, meta.filesScanned),
+    issues: sorted,
+  };
+}
+
+/** Builds the `--list-rules` document (schema v2). */
+function buildRuleList() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    rules: rules.map((rule) => ({
+      id: rule.id,
+      description: rule.description,
+      defaultEnabled: true,
+      types: Object.entries(rule.types).map(([type, m]) => ({
+        type,
+        severity: m.severity,
+        wcag: m.wcag,
+        hint: m.hint,
+        label: m.label,
+        emoji: m.emoji,
+      })),
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+const USAGE = `be-a11y — accessibility auditor for HTML / templates
+
+Usage:
+  be-a11y <dir|file|url> [report.json] [options]
+
+Options:
+  --json         Print the full JSON report (schema v${SCHEMA_VERSION}) to stdout
+  --list-rules   Print all rules and their metadata as JSON, then exit
+  --help, -h     Show this help
+
+Exit codes:
+  0  no issues found
+  1  accessibility issues found
+  2  usage or environment error
+`;
+
+/** Thrown for CLI grammar errors; mapped to exit code 2. */
+class UsageError extends Error {}
+
+/** Parses argv into positionals + flags (flags are position-independent). */
+function parseArgs(argv) {
+  const positionals = [];
+  const flags = { json: false, listRules: false, help: false };
+  for (const arg of argv) {
+    if (arg === "--json") flags.json = true;
+    else if (arg === "--list-rules") flags.listRules = true;
+    else if (arg === "--help" || arg === "-h") flags.help = true;
+    else if (arg.startsWith("--") || arg.startsWith("-")) {
+      throw new UsageError(`Unknown flag: ${arg}`);
+    } else positionals.push(arg);
+  }
+  return { positionals, flags };
+}
+
+/** Emits GitHub Action outputs and a job summary (best-effort, gated on env). */
+async function emitActionOutputs(report, reportPath) {
+  const s = report.summary;
+  try {
+    if (process.env.GITHUB_OUTPUT) {
+      core.setOutput("total", s.total);
+      core.setOutput("errors", s.errors);
+      core.setOutput("warnings", s.warnings);
+      core.setOutput("report-path", reportPath || "");
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+  try {
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      core.summary
+        .addHeading("be-a11y accessibility report")
+        .addRaw(
+          `**${s.total}** problem(s) — ${s.errors} error(s), ${s.warnings} ` +
+            `warning(s) across ${s.filesScanned} file(s).`
+        );
+      const rows = Object.entries(s.byType).map(([type, count]) => [
+        type,
+        String(count),
+      ]);
+      if (rows.length) {
+        core.summary.addTable([
+          [
+            { data: "Type", header: true },
+            { data: "Count", header: true },
+          ],
+          ...rows,
+        ]);
+      }
+      await core.summary.write();
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Reports a usage/environment error and sets exit code 2. Returns undefined so
+ * callers can `return fail(...)`. We set process.exitCode rather than calling
+ * process.exit() so buffered stdout/stderr is flushed before the process ends.
+ */
+function fail(message) {
+  process.stderr.write(`${chalk.red(message)}\n\n${USAGE}`);
+  process.exitCode = 2;
+}
+
+async function main() {
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    return fail(err.message);
+  }
+  const { positionals, flags } = parsed;
+
+  if (flags.help) {
+    process.stdout.write(USAGE);
+    return;
+  }
+
+  if (flags.listRules) {
+    process.stdout.write(`${JSON.stringify(buildRuleList(), null, 2)}\n`);
+    return;
+  }
+
+  const config = loadConfig();
+
+  // Resolve input. GitHub Action inputs are consulted ONLY inside Actions, so a
+  // stray local INPUT_URL env var can't hijack a CLI run.
+  let target = positionals[0];
+  let reportPath = positionals[1];
+  if (process.env.GITHUB_ACTIONS === "true") {
+    const inUrl = core.getInput("url") || core.getInput("input") || "";
+    const inReport = core.getInput("report") || "";
+    if (inUrl) target = inUrl;
+    if (inReport) reportPath = inReport;
+  }
+
+  if (positionals.length > 2) return fail("Too many arguments.");
+  if (!target) return fail("Please provide a directory, file, or URL to scan.");
+
+  let result;
+  try {
+    result = /^https?:\/\//i.test(target)
+      ? await scanUrl(target, config)
+      : scanPath(target, config);
+  } catch (err) {
+    return fail(`Error: ${err.message}`);
+  }
+
+  const { issues, filesScanned } = result;
+  const report = buildReport(issues, {
+    target,
+    filesScanned,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else if (issues.length > 0) {
+    printErrors(issues);
+    printSummary(issues);
+  } else {
+    process.stdout.write(chalk.green.bold("✅ No accessibility issues found!\n"));
+  }
+
+  if (reportPath) {
+    try {
+      fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
+      process.stderr.write(chalk.blue(`📦 Results exported to ${reportPath}\n`));
+    } catch (err) {
+      return fail(`Failed to write report to ${reportPath}: ${err.message}`);
+    }
+  }
+
+  if (process.env.GITHUB_ACTIONS === "true") {
+    await emitActionOutputs(report, reportPath);
+  }
+
+  // Set exitCode (not process.exit) so stdout — which may be a large piped JSON
+  // report — is fully flushed before the process ends.
+  process.exitCode = issues.length > 0 ? 1 : 0;
+}
+
+module.exports = {
+  analyzeContent,
+  scanPath,
+  scanUrl,
+  loadConfig,
+  buildReport,
+  buildRuleList,
+  rules,
+};
+
+if (require.main === require.cache[eval('__filename')]) {
+  main().catch((err) => {
+    process.stderr.write(chalk.red(`Unexpected error: ${err.stack || err.message}\n`));
+    process.exitCode = 2;
+  });
+}
+
+
+/***/ }),
+
 /***/ 7182:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -97246,113 +97668,660 @@ exports.xmlDecodeTree = new Uint16Array(
 
 /***/ }),
 
-/***/ 3066:
+/***/ 7773:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+/**
+ * Rule registry — the single source of truth for be-a11y.
+ *
+ * Every rule is described once here: its config id, human description, the
+ * check function, and metadata for each issue `type` it can emit (severity,
+ * WCAG references, a one-line fix hint, and a display label + emoji). This
+ * replaces the two hand-duplicated rule lists that used to live in index.js and
+ * the inline `typeLabels` map in logger.js.
+ *
+ * Contract for `check`: `(content, file, config) => [{ file, line, type, message }]`.
+ * Enrichment (ruleId/severity/wcag/hint/snippet) happens at aggregation time in
+ * index.js, never inside a rule.
+ *
+ * Conventions:
+ *  - `id` is the config key (`config.rules[id] !== false` enables the rule) and,
+ *    for the 14 legacy rules, MUST equal the historical shouldRun key.
+ *  - `wcag` is an array of Success Criterion numbers; `[]` renders as
+ *    "Best practice".
+ *  - For rules added in v3 the id, the config key, and the single emitted type
+ *    are identical (1:1).
+ */
+
+const rules = [
+  {
+    id: "alt-attributes",
+    description: "Images must have appropriate alt attributes",
+    check: __nccwpck_require__(3066),
+    types: {
+      "missing-alt": {
+        severity: "error",
+        wcag: ["1.1.1"],
+        hint: 'Add a descriptive alt attribute, or alt="" if the image is purely decorative.',
+        label: "Missing ALT",
+        emoji: "🖼️",
+      },
+      "alt-empty": {
+        severity: "warning",
+        wcag: ["1.1.1"],
+        hint: 'Give the image meaningful alt text, or use role="presentation" if it is decorative.',
+        label: "Empty ALT",
+        emoji: "⬜",
+      },
+      "alt-too-long": {
+        severity: "warning",
+        wcag: [],
+        hint: "Shorten the alt text (aim for under ~125 chars); put long descriptions in surrounding content.",
+        label: "ALT Too Long",
+        emoji: "↔️",
+      },
+      "alt-decorative-incorrect": {
+        severity: "warning",
+        wcag: ["1.1.1"],
+        hint: 'A decorative image should have alt="" — not role="presentation" together with non-empty alt.',
+        label: "ALT Decorative",
+        emoji: "🌈",
+      },
+      "alt-functional-empty": {
+        severity: "error",
+        wcag: ["1.1.1", "2.4.4"],
+        hint: "The image is the sole content of a link/button — give it alt text naming the destination or action.",
+        label: "ALT Functional",
+        emoji: "🔗",
+      },
+      "redundant-title": {
+        severity: "warning",
+        wcag: [],
+        hint: "Remove the title attribute or make it differ from alt; identical text is announced twice.",
+        label: "Redundant Title",
+        emoji: "📛",
+      },
+    },
+  },
+  {
+    id: "aria-invalid",
+    description: "aria-label / aria-labelledby must be valid and resolvable",
+    check: __nccwpck_require__(408),
+    types: {
+      "aria-invalid": {
+        severity: "error",
+        wcag: ["4.1.2"],
+        hint: "Provide a non-empty aria-label, or point aria-labelledby at existing element id(s).",
+        label: "ARIA Label",
+        emoji: "♿",
+      },
+    },
+  },
+  {
+    id: "aria-role-invalid",
+    description: "The role attribute must be a valid, non-abstract WAI-ARIA role",
+    check: __nccwpck_require__(5158),
+    types: {
+      "aria-role-invalid": {
+        severity: "error",
+        wcag: ["4.1.2"],
+        hint: "Use a valid, non-abstract WAI-ARIA role, or remove the role attribute.",
+        label: "ARIA Role",
+        emoji: "🧩",
+      },
+    },
+  },
+  {
+    id: "contrast",
+    description: "Inline-styled text must meet the WCAG AA contrast ratio",
+    check: __nccwpck_require__(8468),
+    types: {
+      contrast: {
+        severity: "error",
+        wcag: ["1.4.3"],
+        hint: "Increase the text/background contrast to meet the WCAG AA ratio (4.5:1, or 3:1 for large text).",
+        label: "Contrast",
+        emoji: "🎨",
+      },
+    },
+  },
+  {
+    id: "empty-link",
+    description: "Links must have an accessible name",
+    check: __nccwpck_require__(1992),
+    types: {
+      "empty-link": {
+        severity: "error",
+        wcag: ["2.4.4", "4.1.2"],
+        hint: "Give the link visible text or an aria-label describing its destination.",
+        label: "Empty Link",
+        emoji: "📭",
+      },
+    },
+  },
+  {
+    id: "heading-empty",
+    description: "Headings must not be empty",
+    check: __nccwpck_require__(8501),
+    types: {
+      "heading-empty": {
+        severity: "error",
+        wcag: ["1.3.1", "2.4.6"],
+        hint: "Add text content to the heading, or remove the empty heading element.",
+        label: "Empty Heading",
+        emoji: "❗",
+      },
+    },
+  },
+  {
+    id: "heading-order",
+    description: "Heading levels must not skip when descending",
+    check: __nccwpck_require__(5408),
+    types: {
+      "heading-order": {
+        severity: "warning",
+        wcag: ["1.3.1"],
+        hint: "Do not skip heading levels — a heading may go down by at most one level at a time.",
+        label: "Heading Order",
+        emoji: "📐",
+      },
+    },
+  },
+  {
+    id: "iframe-title-missing",
+    description: "iframes must have a descriptive title",
+    check: __nccwpck_require__(9801),
+    types: {
+      "iframe-title-missing": {
+        severity: "error",
+        wcag: ["4.1.2"],
+        hint: "Add a title attribute (or aria-label) describing the iframe's content.",
+        label: "iframe Title",
+        emoji: "🪟",
+      },
+    },
+  },
+  {
+    id: "label-missing-for",
+    description: "Labels must be associated with a labelable form control",
+    check: __nccwpck_require__(8337),
+    types: {
+      "label-for-missing": {
+        severity: "error",
+        wcag: ["1.3.1", "4.1.2"],
+        hint: "Point the label's for attribute at the id of an existing, labelable form control.",
+        label: "Broken Label",
+        emoji: "🔗",
+      },
+      "label-missing-for": {
+        severity: "warning",
+        wcag: ["1.3.1"],
+        hint: "Associate the label with a control via for=, or wrap the control inside the label.",
+        label: "Unassociated Label",
+        emoji: "🏷️",
+      },
+    },
+  },
+  {
+    id: "missing-landmark",
+    description: "A full document should expose at least one landmark region",
+    check: __nccwpck_require__(3893),
+    types: {
+      "missing-landmark": {
+        severity: "warning",
+        wcag: ["1.3.1", "2.4.1"],
+        hint: "Wrap page regions in landmarks (main, nav, header, footer, aside) or equivalent ARIA roles.",
+        label: "Landmark",
+        emoji: "🏛️",
+      },
+    },
+  },
+  {
+    id: "link-new-tab-warning",
+    description: "Links opening a new tab should warn users",
+    check: __nccwpck_require__(4384),
+    types: {
+      "link-new-tab-warning": {
+        severity: "warning",
+        wcag: ["3.2.2"],
+        hint: "Tell users the link opens a new tab via visible text, aria-label, title, or an SR-only note.",
+        label: "New Tab Warning",
+        emoji: "🧭",
+      },
+    },
+  },
+  {
+    id: "missing-aria",
+    description: "Icons and repeated landmarks need distinguishing accessible names",
+    check: __nccwpck_require__(7141),
+    types: {
+      "missing-aria": {
+        severity: "warning",
+        wcag: ["4.1.2", "1.1.1"],
+        hint: "Give the icon/landmark an accessible name (aria-label, title, or accompanying visible text).",
+        label: "Missing ARIA",
+        emoji: "👀",
+      },
+    },
+  },
+  {
+    id: "multiple-h1",
+    description: "A page should have a single top-level h1",
+    check: __nccwpck_require__(1141),
+    types: {
+      "multiple-h1": {
+        severity: "warning",
+        wcag: [],
+        hint: "Use one h1 per page/view as the main title and demote the others to h2+.",
+        label: "Multiple H1",
+        emoji: "🧱",
+      },
+    },
+  },
+  {
+    id: "input-unlabeled",
+    description: "Form controls must have an accessible name",
+    check: __nccwpck_require__(9612),
+    types: {
+      "input-unlabeled": {
+        severity: "error",
+        wcag: ["1.3.1", "4.1.2"],
+        hint: "Associate the control with a <label>, or add aria-label / aria-labelledby.",
+        label: "Unlabeled Input",
+        emoji: "🔘",
+      },
+      "input-placeholder-only": {
+        severity: "warning",
+        wcag: ["3.3.2"],
+        hint: "A placeholder is not a label — add a visible <label> (the placeholder vanishes once typing starts).",
+        label: "Placeholder Only",
+        emoji: "✍️",
+      },
+    },
+  },
+  {
+    id: "html-lang",
+    description: "The document's <html> must declare a valid lang",
+    check: __nccwpck_require__(9391),
+    types: {
+      "html-lang": {
+        severity: "error",
+        wcag: ["3.1.1"],
+        hint: 'Add a valid BCP-47 lang to <html> (e.g. lang="en").',
+        label: "HTML Lang",
+        emoji: "🌐",
+      },
+    },
+  },
+  {
+    id: "document-title",
+    description: "A document must have a non-empty <title>",
+    check: __nccwpck_require__(865),
+    types: {
+      "document-title": {
+        severity: "error",
+        wcag: ["2.4.2"],
+        hint: "Add a concise, descriptive <title> inside <head>.",
+        label: "Document Title",
+        emoji: "📄",
+      },
+    },
+  },
+  {
+    id: "duplicate-id",
+    description: "id attributes must be unique within a document",
+    check: __nccwpck_require__(204),
+    types: {
+      "duplicate-id": {
+        severity: "error",
+        wcag: ["4.1.1"],
+        hint: "Make the id unique; duplicate ids break label/aria references and scripting.",
+        label: "Duplicate ID",
+        emoji: "🆔",
+      },
+    },
+  },
+  {
+    id: "empty-button",
+    description: "Buttons must have an accessible name",
+    check: __nccwpck_require__(6693),
+    types: {
+      "empty-button": {
+        severity: "error",
+        wcag: ["4.1.2"],
+        hint: "Give the button text content, an aria-label, or (for input) a value.",
+        label: "Empty Button",
+        emoji: "🔳",
+      },
+    },
+  },
+  {
+    id: "tabindex-positive",
+    description: "Avoid positive tabindex values",
+    check: __nccwpck_require__(7964),
+    types: {
+      "tabindex-positive": {
+        severity: "warning",
+        wcag: ["2.4.3"],
+        hint: "Use tabindex=\"0\" or \"-1\"; positive values override and break the natural focus order.",
+        label: "Positive Tabindex",
+        emoji: "🔢",
+      },
+    },
+  },
+  {
+    id: "meta-viewport",
+    description: "The viewport meta must not disable zoom",
+    check: __nccwpck_require__(6889),
+    types: {
+      "meta-viewport": {
+        severity: "error",
+        wcag: ["1.4.4"],
+        hint: "Remove user-scalable=no and any maximum-scale below 2 so users can zoom.",
+        label: "Viewport Zoom",
+        emoji: "🔍",
+      },
+    },
+  },
+  {
+    id: "table-headers",
+    description: "Data tables should have header cells",
+    check: __nccwpck_require__(5048),
+    types: {
+      "table-headers": {
+        severity: "warning",
+        wcag: ["1.3.1"],
+        hint: 'Add <th> header cells (with scope), or role="presentation" for a layout table.',
+        label: "Table Headers",
+        emoji: "🧮",
+      },
+    },
+  },
+  {
+    id: "meta-refresh",
+    description: "Avoid timed meta refresh/redirect",
+    check: __nccwpck_require__(4724),
+    types: {
+      "meta-refresh": {
+        severity: "error",
+        wcag: ["2.2.1"],
+        hint: "Remove the timed meta refresh; if a redirect is needed, do it server-side.",
+        label: "Meta Refresh",
+        emoji: "⏱️",
+      },
+    },
+  },
+  {
+    id: "skip-link",
+    description: "A page should offer a way to skip to main content",
+    check: __nccwpck_require__(5574),
+    types: {
+      "skip-link": {
+        severity: "warning",
+        wcag: ["2.4.1"],
+        hint: "Add a skip link, a <main> landmark, or an <h1> so users can reach the main content.",
+        label: "Skip Link",
+        emoji: "⏭️",
+      },
+    },
+  },
+  {
+    id: "fieldset-legend",
+    description: "Grouped controls need a fieldset/legend or named group",
+    check: __nccwpck_require__(2207),
+    types: {
+      "fieldset-legend": {
+        severity: "warning",
+        wcag: ["1.3.1", "3.3.2"],
+        hint: "Wrap related radios/checkboxes in a <fieldset> with a <legend> describing the group.",
+        label: "Fieldset Legend",
+        emoji: "📋",
+      },
+    },
+  },
+  {
+    id: "autocomplete-valid",
+    description: "autocomplete must use valid autofill tokens",
+    check: __nccwpck_require__(7374),
+    types: {
+      "autocomplete-valid": {
+        severity: "error",
+        wcag: ["1.3.5"],
+        hint: "Use a valid WHATWG autofill token (e.g. email, given-name, cc-number).",
+        label: "Autocomplete",
+        emoji: "🧾",
+      },
+    },
+  },
+  {
+    id: "list-structure",
+    description: "Lists must follow their HTML content model",
+    check: __nccwpck_require__(7201),
+    types: {
+      "list-structure": {
+        severity: "error",
+        wcag: ["1.3.1"],
+        hint: "Only <li> may be a direct child of <ul>/<ol>; only <dt>/<dd>/<div> inside <dl>.",
+        label: "List Structure",
+        emoji: "📃",
+      },
+    },
+  },
+  {
+    id: "media-captions",
+    description: "Video/audio need captions or a transcript",
+    check: __nccwpck_require__(6619),
+    types: {
+      "media-captions": {
+        severity: "warning",
+        wcag: ["1.2.2"],
+        hint: 'Add a <track kind="captions"> to video and a transcript for audio.',
+        label: "Media Captions",
+        emoji: "🎬",
+      },
+    },
+  },
+  {
+    id: "accesskey-duplicate",
+    description: "accesskey values must be unique",
+    check: __nccwpck_require__(5748),
+    types: {
+      "accesskey-duplicate": {
+        severity: "warning",
+        wcag: [],
+        hint: "Give each accesskey a unique value, or remove the duplicates.",
+        label: "Duplicate Accesskey",
+        emoji: "⌨️",
+      },
+    },
+  },
+  {
+    id: "deprecated-elements",
+    description: "Deprecated, inaccessible elements must not be used",
+    check: __nccwpck_require__(7642),
+    types: {
+      "deprecated-elements": {
+        severity: "error",
+        wcag: ["2.2.2"],
+        hint: "Remove <marquee>/<blink>; use CSS animation with a reduced-motion opt-out if motion is essential.",
+        label: "Deprecated Element",
+        emoji: "🗑️",
+      },
+    },
+  },
+];
 
 /**
- * Validates that all <img> tags have appropriate `alt` attributes.
- * Checks for missing, empty, decorative, functional, or overly long alt texts.
+ * Flat index: emitted `type` -> { ruleId, severity, wcag, hint, label, emoji }.
+ * Built from the rule table so it can never drift from it.
+ */
+const typeMeta = {};
+for (const rule of rules) {
+  for (const [type, meta] of Object.entries(rule.types)) {
+    typeMeta[type] = { ruleId: rule.id, ...meta };
+  }
+}
+
+module.exports = { rules, typeMeta };
+
+
+/***/ }),
+
+/***/ 5748:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+/**
+ * Warns when the same `accesskey` (case-insensitive) is assigned more than once;
+ * duplicates make the shortcut ambiguous. Each repeat after the first is
+ * reported, pointing back at the first use. Templated values are skipped.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of alt attribute errors.
+ * @returns {object[]} accesskey-duplicate issues.
  */
-module.exports = function altAttributes(content, file, config = { rules: {} }) {
-  const $ = cheerio.load(content);
+module.exports = function accesskeyDuplicate(content, file) {
+  const $ = loadDocument(content);
   const errors = [];
-  const seen = new Set();
+  const firstLineByKey = new Map();
 
-  $("img").each((_, el) => {
-    const $el = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-    const locationKey = `${file}:${lineNumber}`;
-    if (seen.has(locationKey)) return;
-    seen.add(locationKey);
-
-    const alt = $el.attr("alt");
-    const role = $el.attr("role");
-    const isDecorative =
-      role === "presentation" || role === "none" || alt === "";
-    const isInLinkOrButton = $el.parents("a, button").length > 0;
-
-    // Case 1: Missing alt attribute entirely
-    if (typeof alt === "undefined") {
+  $("[accesskey]").each((_, el) => {
+    const raw = $(el).attr("accesskey");
+    if (typeof raw !== "string" || raw.trim() === "" || looksTemplated(raw)) return;
+    const key = raw.trim().toLowerCase();
+    const line = getLine($, el, content);
+    if (firstLineByKey.has(key)) {
       errors.push({
         file,
-        line: lineNumber,
-        type: "missing-alt",
-        message: `<img> tag is missing an alt attribute`,
+        line,
+        type: "accesskey-duplicate",
+        message: `Duplicate accesskey "${key}" (first used at line ${firstLineByKey.get(key)})`,
       });
-      return;
-    }
-
-    // Case 2: Decorative image with non-empty alt
-    if (isDecorative && alt !== "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-decorative-incorrect",
-        message: `Decorative image should have empty alt="" or role="presentation"`,
-      });
-      return;
-    }
-
-    // Case 3: Functional image with empty alt
-    if (isInLinkOrButton && alt.trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-functional-empty",
-        message: `Functional image inside <a> or <button> needs descriptive alt text`,
-      });
-      return;
-    }
-
-    // Case 4: alt exists but only contains whitespace
-    if (alt.trim() === "") {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-empty",
-        message: `alt attribute exists but is empty; ensure this is intentional (e.g., decorative image)`,
-      });
-    }
-
-    // Case 5: alt is too long
-    if (alt.length > 30) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "alt-too-long",
-        message: `alt attribute exceeds 30 characters (${alt.length} characters)`,
-      });
-    }
-
-    // Case 6: redundant title equals alt
-    const title = $el.attr("title");
-    if (
-      alt &&
-      title &&
-      alt.trim().toLowerCase() === title.trim().toLowerCase()
-    ) {
-      if (config.rules["redundant-title"] !== false) {
-        errors.push({
-          file,
-          line: lineNumber,
-          type: "redundant-title",
-          message: `<img> has a 'title' attribute that duplicates its 'alt' text: "${alt}"`,
-        });
-      }
+    } else {
+      firstLineByKey.set(key, line);
     }
   });
 
   return errors;
-}
+};
+
+
+/***/ }),
+
+/***/ 3066:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLocation } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
+const looksTemplated = __nccwpck_require__(8862);
+
+const DEFAULT_MAX_ALT_LENGTH = 125;
+
+/**
+ * Validates `alt` on <img> and <input type="image">. Hardened behavior:
+ *  - Skips hidden images; de-dupes by source offset (distinct same-line images
+ *    are no longer dropped).
+ *  - Missing alt passes when role="presentation"/"none" or an aria-label /
+ *    aria-labelledby resolves; otherwise → missing-alt.
+ *  - alt="" is valid decorative (no finding) — unless the image is the only
+ *    content of an otherwise-nameless link/button → alt-functional-empty.
+ *  - Whitespace-only alt → alt-empty.
+ *  - role="presentation"/"none" with non-empty alt → alt-decorative-incorrect.
+ *  - Non-empty alt over maxLength (default 125, configurable, templated skipped)
+ *    → alt-too-long; alt duplicated by title → redundant-title.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @param {object} [config] - Normalized config (options["alt-attributes"].maxLength).
+ * @returns {object[]} Alt-attribute issues.
+ */
+module.exports = function altAttributes(content, file, config = {}) {
+  const $ = loadDocument(content);
+  const errors = [];
+  const seen = new Set();
+  const options = (config.options && config.options["alt-attributes"]) || {};
+  const maxLength = Number.isFinite(options.maxLength)
+    ? options.maxLength
+    : DEFAULT_MAX_ALT_LENGTH;
+
+  $("img, input").each((_, el) => {
+    const $el = $(el);
+    const tag = el.name ? el.name.toLowerCase() : "";
+    if (tag === "input" && ($el.attr("type") || "").toLowerCase() !== "image") {
+      return;
+    }
+    if (isHidden($, el)) return;
+
+    const loc = getLocation($, el, content);
+    if (loc.offset != null) {
+      const key = String(loc.offset);
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
+    const line = loc.line;
+    const push = (type, message) => errors.push({ file, line, type, message });
+
+    // <input type="image"> is a functional control — it always needs a name.
+    if (tag === "input") {
+      if (getAccessibleName($, el) === "") {
+        push("missing-alt", `<input type="image"> is missing an alt attribute (accessible name)`);
+      }
+      return;
+    }
+
+    const alt = $el.attr("alt");
+    const role = ($el.attr("role") || "").trim().toLowerCase();
+    const isDecorativeRole = role === "presentation" || role === "none";
+
+    if (typeof alt === "undefined") {
+      if (isDecorativeRole) return; // explicitly decorative
+      if (getAccessibleName($, el) !== "") return; // named via aria-*
+      push("missing-alt", `<img> is missing an alt attribute`);
+      return;
+    }
+
+    if (isDecorativeRole && alt.trim() !== "") {
+      push(
+        "alt-decorative-incorrect",
+        `Image with role="${role}" should have an empty alt="" (found alt="${alt}")`
+      );
+      return;
+    }
+
+    if (alt === "") {
+      // Valid decorative unless it is the sole content of a nameless link/button.
+      const owner = $el.closest("a[href], button, [role=button]");
+      if (owner.length && getAccessibleName($, owner.get(0)) === "") {
+        push(
+          "alt-functional-empty",
+          `Functional image (sole content of a link/button) needs descriptive alt text`
+        );
+      }
+      return;
+    }
+
+    if (alt.trim() === "") {
+      push(
+        "alt-empty",
+        `alt contains only whitespace; use alt="" for decorative images or add real text`
+      );
+      return;
+    }
+
+    if (!looksTemplated(alt) && alt.length > maxLength) {
+      push("alt-too-long", `alt text is ${alt.length} characters (over ${maxLength}); keep it concise`);
+    }
+    const title = $el.attr("title");
+    if (title && title.trim().toLowerCase() === alt.trim().toLowerCase()) {
+      push("redundant-title", `title attribute duplicates the alt text ("${alt}")`);
+    }
+  });
+
+  return errors;
+};
 
 
 /***/ }),
@@ -97360,50 +98329,65 @@ module.exports = function altAttributes(content, file, config = { rules: {} }) {
 /***/ 408:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { collectIds } = __nccwpck_require__(1512);
+const looksTemplated = __nccwpck_require__(8862);
 
 /**
- * Checks for invalid or missing values in `aria-label` and `aria-labelledby`.
- * Ensures `aria-labelledby` points to existing IDs.
+ * Validates aria-label / aria-labelledby. An empty aria-label is flagged. Each
+ * aria-labelledby id reference is resolved through collectIds (a Map lookup — no
+ * `$("#" + id)`, so ids containing selector metacharacters like `a.b` no longer
+ * crash the run); templated values are skipped, and any missing references are
+ * reported in a single message.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of ARIA label errors.
+ * @returns {object[]} ARIA label issues.
  */
 module.exports = function ariaLabels(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
   $("[aria-label], [aria-labelledby]").each((_, el) => {
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
+    const $el = $(el);
+    const line = getLine($, el, content);
 
-    if ($(el).attr("aria-label") && $(el).attr("aria-label").trim() === "") {
+    const ariaLabel = $el.attr("aria-label");
+    if (typeof ariaLabel === "string" && ariaLabel.trim() === "") {
       errors.push({
         file,
-        line: lineNumber,
+        line,
         type: "aria-invalid",
-        message: `aria-label is empty`,
+        message: `aria-label is present but empty`,
       });
     }
 
-    if ($(el).attr("aria-labelledby")) {
-      const id = $(el).attr("aria-labelledby");
-      if (!$(`#${id}`).length) {
+    const labelledby = $el.attr("aria-labelledby");
+    if (
+      typeof labelledby === "string" &&
+      labelledby.trim() !== "" &&
+      !looksTemplated(labelledby)
+    ) {
+      const { idSet } = collectIds($);
+      const missing = labelledby
+        .trim()
+        .split(/\s+/)
+        .filter((id) => !idSet.has(id));
+      if (missing.length > 0) {
         errors.push({
           file,
-          line: lineNumber,
+          line,
           type: "aria-invalid",
-          message: `aria-labelledby references a non-existent ID: ${id}`,
+          message: `aria-labelledby references non-existent id${
+            missing.length > 1 ? "s" : ""
+          }: ${missing.join(", ")}`,
         });
       }
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97411,55 +98395,175 @@ module.exports = function ariaLabels(content, file) {
 /***/ 5158:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+// The 82 concrete roles of WAI-ARIA 1.2.
+const CONCRETE_ROLES = new Set([
+  "alert", "alertdialog", "application", "article", "banner", "blockquote",
+  "button", "caption", "cell", "checkbox", "code", "columnheader", "combobox",
+  "complementary", "contentinfo", "definition", "deletion", "dialog",
+  "directory", "document", "emphasis", "feed", "figure", "form", "generic",
+  "grid", "gridcell", "group", "heading", "img", "insertion", "link", "list",
+  "listbox", "listitem", "log", "main", "marquee", "math", "menu", "menubar",
+  "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation",
+  "none", "note", "option", "paragraph", "presentation", "progressbar", "radio",
+  "radiogroup", "region", "row", "rowgroup", "rowheader", "scrollbar", "search",
+  "searchbox", "separator", "slider", "spinbutton", "status", "strong",
+  "subscript", "superscript", "switch", "tab", "table", "tablist", "tabpanel",
+  "term", "textbox", "time", "timer", "toolbar", "tooltip", "tree", "treegrid",
+  "treeitem",
+]);
+
+// The 12 abstract roles — valid in the taxonomy but must not be used by authors.
+const ABSTRACT_ROLES = new Set([
+  "command", "composite", "input", "landmark", "range", "roletype", "section",
+  "sectionhead", "select", "structure", "widget", "window",
+]);
+
+// Explicitly-accepted Graphics-ARIA roles (doc-* is matched by prefix).
+const GRAPHICS_ROLES = new Set([
+  "graphics-document", "graphics-object", "graphics-symbol",
+]);
+
+/** True if a single role token is a valid, non-abstract role. */
+function isKnownRole(token) {
+  return (
+    CONCRETE_ROLES.has(token) ||
+    GRAPHICS_ROLES.has(token) ||
+    token.startsWith("doc-") // DPUB-ARIA
+  );
+}
 
 /**
- * Rule to validate correct usage of ARIA roles
- * (e.g., role="button" on non-interactive tags like <div> without a tabindex and click handler is misleading).
+ * Validates the `role` attribute against the full WAI-ARIA 1.2 role set (plus
+ * DPUB `doc-*` and Graphics-ARIA roles). A space-separated role list is valid if
+ * ANY token is known (role fallback). Abstract roles get a specific message.
+ * Templated role values are skipped.
  *
- * @param {*} content
- * @param {*} file
- * @returns
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} Invalid-role issues.
  */
 module.exports = function ariaRoles(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
   $("[role]").each((_, el) => {
-    const role = $(el).attr("role");
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
+    const raw = $(el).attr("role");
+    if (typeof raw !== "string" || raw.trim() === "") return;
+    if (looksTemplated(raw)) return;
 
-    // ... extend this list as needed
-    const allowedRoles = [
-      "button",
-      "checkbox",
-      "dialog",
-      "link",
-      "listbox",
-      "menu",
-      "navigation",
-      "progressbar",
-      "radio",
-      "slider",
-      "tab",
-      "img",
-    ];
+    const tokens = raw.trim().toLowerCase().split(/\s+/);
+    if (tokens.some(isKnownRole)) return;
 
-    if (!allowedRoles.includes(role)) {
+    const line = getLine($, el, content);
+    const abstract = tokens.find((t) => ABSTRACT_ROLES.has(t));
+    if (abstract) {
       errors.push({
         file,
-        line: lineNumber,
+        line,
         type: "aria-role-invalid",
-        message: `Unrecognized or inappropriate ARIA role: "${role}"`,
+        message: `"${abstract}" is an abstract ARIA role and must not be used directly`,
+      });
+      return;
+    }
+
+    errors.push({
+      file,
+      line,
+      type: "aria-role-invalid",
+      message: `Unrecognized ARIA role: "${raw.trim()}"`,
+    });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 7374:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+// WHATWG autofill field names that are NOT contact fields.
+const FIELD_TOKENS = new Set([
+  "name", "honorific-prefix", "given-name", "additional-name", "family-name",
+  "honorific-suffix", "nickname", "username", "new-password", "current-password",
+  "one-time-code", "organization-title", "organization", "street-address",
+  "address-line1", "address-line2", "address-line3", "address-level1",
+  "address-level2", "address-level3", "address-level4", "country", "country-name",
+  "postal-code", "cc-name", "cc-given-name", "cc-additional-name",
+  "cc-family-name", "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year",
+  "cc-csc", "cc-type", "transaction-currency", "transaction-amount", "language",
+  "bday", "bday-day", "bday-month", "bday-year", "sex", "url", "photo",
+]);
+
+// Contact fields — these may be preceded by a home|work|mobile|fax|pager modifier.
+const CONTACT_TOKENS = new Set([
+  "tel", "tel-country-code", "tel-national", "tel-area-code", "tel-local",
+  "tel-local-prefix", "tel-local-suffix", "tel-extension", "email", "impp",
+]);
+
+const CONTACT_MODIFIERS = new Set(["home", "work", "mobile", "fax", "pager"]);
+
+/** Validates the ordered autofill detail tokens; returns true if well-formed. */
+function isValidAutocomplete(value) {
+  if (value === "on" || value === "off") return true;
+
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  if (tokens[tokens.length - 1] === "webauthn") tokens.pop();
+  if (tokens.length === 0) return false;
+
+  const field = tokens.pop();
+  const isField = FIELD_TOKENS.has(field);
+  const isContact = CONTACT_TOKENS.has(field);
+  if (!isField && !isContact) return false;
+
+  // Remaining prefix tokens, in order: section-* , shipping|billing , modifier.
+  let i = 0;
+  if (tokens[i] && tokens[i].startsWith("section-")) i++;
+  if (tokens[i] === "shipping" || tokens[i] === "billing") i++;
+  if (tokens[i] && CONTACT_MODIFIERS.has(tokens[i])) {
+    if (!isContact) return false; // modifier only valid on contact fields
+    i++;
+  }
+  return i === tokens.length;
+}
+
+/**
+ * Validates the `autocomplete` attribute on inputs/selects/textareas against the
+ * WHATWG autofill grammar. Empty and templated values are skipped. An unknown or
+ * misordered token sequence is an error (helps browsers/AT autofill correctly).
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} autocomplete-valid issues.
+ */
+module.exports = function autocompleteValid(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("input, select, textarea").each((_, el) => {
+    const raw = $(el).attr("autocomplete");
+    if (typeof raw !== "string" || raw.trim() === "" || looksTemplated(raw)) return;
+    const value = raw.trim().toLowerCase();
+    if (!isValidAutocomplete(value)) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "autocomplete-valid",
+        message: `autocomplete="${raw.trim()}" is not a valid autofill value`,
       });
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97467,57 +98571,254 @@ module.exports = function ariaRoles(content, file) {
 /***/ 8468:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
 const tinycolor = __nccwpck_require__(9712);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden, parseInlineStyle } = __nccwpck_require__(4472);
+
+/** True if the element has a direct, non-whitespace text child node. */
+function hasDirectText($, el) {
+  return $(el)
+    .contents()
+    .toArray()
+    .some((n) => n.type === "text" && n.data && n.data.trim() !== "");
+}
+
+/** Background color from `background-color` or the first color token of `background`. */
+function parseBackground(decls) {
+  if (decls["background-color"]) {
+    const c = tinycolor(decls["background-color"]);
+    if (c.isValid()) return c;
+  }
+  if (decls.background) {
+    for (const token of decls.background.split(/\s+/)) {
+      const c = tinycolor(token);
+      if (c.isValid()) return c;
+    }
+  }
+  return null;
+}
+
+/** WCAG "large text": >= 24px, or >= 18.66px when bold (font-weight >= 700). */
+function isLargeText(decls) {
+  const match = /^([\d.]+)px/.exec((decls["font-size"] || "").trim());
+  if (!match) return false; // only px is handled (documented limitation)
+  const px = parseFloat(match[1]);
+  const weight = (decls["font-weight"] || "").trim().toLowerCase();
+  const bold = weight === "bold" || parseInt(weight, 10) >= 700;
+  return px >= 24 || (px >= 18.66 && bold);
+}
 
 /**
- * Evaluates inline styles for text/background color contrast ratio.
- * Flags contrast ratios below WCAG AA threshold (4.5).
+ * Evaluates inline-style text/background contrast against the WCAG AA threshold
+ * (4.5:1 normal text, 3:1 large text). Only elements with direct text are
+ * considered (styled containers no longer produce false positives). Translucent
+ * colors (alpha < 1, incl. `transparent`) are skipped, since the effective
+ * color depends on layered content. Inline styles only — external/embedded CSS
+ * is not resolved (documented limitation).
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of contrast issues.
+ * @returns {object[]} Contrast issues.
  */
 module.exports = function contrast(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
-  $("*").each((_, el) => {
-    const style = $(el).attr("style");
-    if (
-      style &&
-      style.includes("color") &&
-      style.includes("background-color")
-    ) {
-      const inlineStyles = style.split(";").reduce((acc, rule) => {
-        const [key, value] = rule.split(":");
-        if (key && value) acc[key.trim()] = value.trim();
-        return acc;
-      }, {});
+  $("[style]").each((_, el) => {
+    if (isHidden($, el)) return;
+    if (!hasDirectText($, el)) return;
 
-      const fg = tinycolor(inlineStyles["color"]);
-      const bg = tinycolor(inlineStyles["background-color"]);
+    const decls = parseInlineStyle($(el).attr("style"));
+    if (!decls.color) return;
 
-      if (fg.isValid() && bg.isValid()) {
-        const contrast = tinycolor.readability(bg, fg);
-        if (contrast < 4.5) {
-          const html = $.html(el);
-          const tagIndex = content.indexOf(html);
-          const lineNumber = getLineNumber(content, tagIndex);
-          errors.push({
-            file,
-            line: lineNumber,
-            type: "contrast",
-            message: `Low contrast ratio (${contrast.toFixed(2)}): ${inlineStyles["color"]} on ${inlineStyles["background-color"]}`,
-          });
-        }
-      }
+    const fg = tinycolor(decls.color);
+    if (!fg.isValid()) return;
+    const bg = parseBackground(decls);
+    if (!bg) return;
+    if (fg.getAlpha() < 1 || bg.getAlpha() < 1) return;
+
+    const threshold = isLargeText(decls) ? 3.0 : 4.5;
+    const ratio = tinycolor.readability(bg, fg);
+    if (ratio < threshold) {
+      const bgShown = decls["background-color"] || decls.background;
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "contrast",
+        message: `Contrast ${ratio.toFixed(2)}:1 is below the ${threshold}:1 minimum (${decls.color} on ${bgShown})`,
+      });
     }
   });
 
   return errors;
-}
+};
+
+
+/***/ }),
+
+/***/ 7642:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+
+/**
+ * Flags deprecated presentational elements that cause accessibility problems:
+ * <marquee> (moving content that can't be paused) and <blink>.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} deprecated-elements issues.
+ */
+module.exports = function deprecatedElements(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("marquee, blink").each((_, el) => {
+    const tag = el.name ? el.name.toLowerCase() : "element";
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "deprecated-elements",
+      message: `<${tag}> is deprecated and inaccessible (unstoppable motion); remove it`,
+    });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 865:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+/**
+ * Requires a non-empty <title> in a document's <head>. Gated on the raw source
+ * containing a <head> tag, so partial templates are exempt. A missing title, or
+ * an empty non-templated one, is an error.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} document-title issues.
+ */
+module.exports = function documentTitle(content, file) {
+  if (!/<head[\s>]/i.test(content)) return [];
+  const $ = loadDocument(content);
+  const title = $("head > title").first();
+  const head = $("head").get(0);
+
+  if (title.length === 0) {
+    return [
+      {
+        file,
+        line: head ? getLine($, head, content) : 1,
+        type: "document-title",
+        message: `Document <head> has no <title> element`,
+      },
+    ];
+  }
+
+  const text = title.text();
+  if (text.trim() === "" && !looksTemplated(text)) {
+    return [
+      {
+        file,
+        line: getLine($, title.get(0), content),
+        type: "document-title",
+        message: `<title> is empty`,
+      },
+    ];
+  }
+  return [];
+};
+
+
+/***/ }),
+
+/***/ 204:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { collectIds } = __nccwpck_require__(1512);
+
+/**
+ * Flags duplicate `id` values. Each occurrence after the first is reported,
+ * pointing back at the line of the first definition. Empty and templated ids are
+ * ignored (handled in collectIds).
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} duplicate-id issues.
+ */
+module.exports = function duplicateId(content, file) {
+  const $ = loadDocument(content);
+  const { duplicates } = collectIds($);
+  const errors = [];
+
+  for (const [id, els] of duplicates) {
+    const firstLine = getLine($, els[0], content);
+    for (let i = 1; i < els.length; i++) {
+      errors.push({
+        file,
+        line: getLine($, els[i], content),
+        type: "duplicate-id",
+        message: `Duplicate id "${id}" (first defined at line ${firstLine})`,
+      });
+    }
+  }
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 6693:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
+
+/**
+ * Flags buttons with no accessible name: <button>, [role=button], and
+ * <input type="button">. Hidden buttons are skipped. <input type="submit|reset">
+ * are exempt (they carry a UA-default label). When the button is empty only
+ * because of an unnamed img/svg child, altAttributes/missingAria own that
+ * finding (partition), so it is not reported here.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} empty-button issues.
+ */
+module.exports = function emptyButton(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("button, [role=button], input[type=button]").each((_, el) => {
+    if (isHidden($, el)) return;
+    if (getAccessibleName($, el) !== "") return;
+
+    const unnamedGraphic = $(el)
+      .find("img, svg")
+      .toArray()
+      .some((n) => getAccessibleName($, n) === "");
+    if (unnamedGraphic) return;
+
+    const tag = el.name ? el.name.toLowerCase() : "element";
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "empty-button",
+      message: `<${tag}> has no accessible name; add text content, an aria-label, or a value`,
+    });
+  });
+
+  return errors;
+};
 
 
 /***/ }),
@@ -97525,40 +98826,133 @@ module.exports = function contrast(content, file) {
 /***/ 1992:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
 
 /**
- * Checks for links that are empty or lack href/text.
+ * Flags links (`a[href]`, any href value) with no accessible name. Hidden links
+ * are skipped. Href-less `<a>` is intentionally ignored (no link role, not
+ * focusable). Ownership partition: a link that is empty only because it wraps an
+ * unnamed <img> is left to altAttributes (missing-alt / alt-functional-empty),
+ * so each mistake is reported once.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of link errors.
+ * @returns {object[]} Empty-link issues.
  */
 module.exports = function emptyLinks(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
-  $("a").each((_, el) => {
+  $("a[href]").each((_, el) => {
     const $el = $(el);
-    const href = $el.attr("href");
-    const text = $el.text().trim();
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
+    if (isHidden($, el)) return;
+    if (getAccessibleName($, el) !== "") return;
 
-    if ((!href || href === "#") && !text) {
+    // If an unnamed <img> descendant is the reason the link has no name,
+    // altAttributes owns that finding — don't double-report.
+    const unnamedImg = $el
+      .find("img")
+      .toArray()
+      .some((img) => getAccessibleName($, img) === "");
+    if (unnamedImg) return;
+
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "empty-link",
+      message: `<a href> has no accessible name; add link text or an aria-label`,
+    });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 2207:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+/** True if an element has an ARIA/title accessible name (not text content). */
+function hasAriaName($, el) {
+  const $el = $(el);
+  const ariaLabel = $el.attr("aria-label");
+  if (typeof ariaLabel === "string" && ariaLabel.trim() !== "") return true;
+  const labelledby = $el.attr("aria-labelledby");
+  if (typeof labelledby === "string" && labelledby.trim() !== "") return true;
+  const title = $el.attr("title");
+  if (typeof title === "string" && title.trim() !== "") return true;
+  return false;
+}
+
+/** True if a <fieldset> is named by a non-empty <legend> or an ARIA name. */
+function fieldsetIsNamed($, el) {
+  const legend = $(el).children("legend").first();
+  if (legend.length && legend.text().trim() !== "") return true;
+  return hasAriaName($, el);
+}
+
+/**
+ * Two grouping checks:
+ *   (a) Two or more radios/checkboxes sharing a `name` that are not enclosed in a
+ *       named group. A <fieldset> ancestor is left to check (b) to avoid
+ *       double-reporting; a role=group/radiogroup ancestor must itself be named.
+ *   (b) A <fieldset> with no <legend> (or accessible name).
+ * Templated control names are skipped.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} fieldset-legend issues.
+ */
+module.exports = function fieldsetLegend(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  // (a) grouped radios/checkboxes without a named group.
+  const byName = new Map();
+  $("input[type=radio], input[type=checkbox]").each((_, el) => {
+    const name = ($(el).attr("name") || "").trim();
+    if (name === "" || looksTemplated(name)) return;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(el);
+  });
+
+  for (const [name, members] of byName) {
+    if (members.length < 2) continue;
+    const first = members[0];
+    const group = $(first).closest("fieldset, [role=group], [role=radiogroup]");
+    if (group.length && (group.get(0).name || "").toLowerCase() === "fieldset") {
+      continue; // a fieldset ancestor exists — its naming is check (b)'s concern
+    }
+    if (!(group.length && hasAriaName($, group.get(0)))) {
       errors.push({
         file,
-        line: lineNumber,
-        type: "empty-link",
-        message: `<a> tag is empty or has no href/text`,
+        line: getLine($, first, content),
+        type: "fieldset-legend",
+        message: `Related "${name}" inputs are not grouped in a named fieldset or group (add <fieldset><legend>)`,
+      });
+    }
+  }
+
+  // (b) fieldset without a legend / accessible name.
+  $("fieldset").each((_, el) => {
+    if (!fieldsetIsNamed($, el)) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "fieldset-legend",
+        message: `<fieldset> has no <legend> (or accessible name) describing the group`,
       });
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97566,38 +98960,48 @@ module.exports = function emptyLinks(content, file) {
 /***/ 8501:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
 
 /**
- * Checks for empty heading tags (e.g., <h2></h2> or <h2>   </h2>).
+ * Flags headings with no accessible name. Considers native h1–h6 and
+ * role="heading". Skips hidden headings and native headings whose role has been
+ * overridden (e.g. <h2 role="presentation">). A heading named only by a child
+ * image (`<h2><img alt="Section"></h2>`) now passes.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of empty heading errors.
+ * @returns {object[]} Empty-heading issues.
  */
 module.exports = function headingEmpty(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
-  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
-    const text = $(el).text().trim();
-    if (text === "") {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
+  $("h1, h2, h3, h4, h5, h6, [role=heading]").each((_, el) => {
+    const tag = el.name ? el.name.toLowerCase() : "";
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    const isNativeHeading = /^h[1-6]$/.test(tag);
 
+    // Acts as a heading only if role="heading" or a native heading with no
+    // overriding role.
+    const actsAsHeading = role === "heading" || (isNativeHeading && role === "");
+    if (!actsAsHeading) return;
+    if (isHidden($, el)) return;
+
+    if (getAccessibleName($, el) === "") {
+      const shown = isNativeHeading ? `<${tag}>` : `<${tag} role="heading">`;
       errors.push({
         file,
-        line: lineNumber,
+        line: getLine($, el, content),
         type: "heading-empty",
-        message: `<${el.name}> element is empty or contains only whitespace`,
+        message: `${shown} is empty or has no accessible name`,
       });
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97605,41 +99009,107 @@ module.exports = function headingEmpty(content, file) {
 /***/ 5408:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
 
 /**
- * Checks if headings (h1-h6) are used in the correct order (no jumps).
+ * Flags heading levels that skip when descending (e.g. h1 → h3). Considers
+ * native h1–h6 and role="heading" (level from aria-level, default 2). Hidden
+ * headings and role-overridden native headings are ignored. Per-file, and only
+ * downward skips are reported (going back up any amount is allowed).
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of heading order errors.
+ * @returns {object[]} Heading-order issues.
  */
 module.exports = function headingOrder(content, file) {
-  const $ = cheerio.load(content);
-  let lastLevel = 0;
+  const $ = loadDocument(content);
   const errors = [];
+  let lastLevel = 0;
 
-  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
-    const level = parseInt(el.name.substring(1));
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
+  $("h1, h2, h3, h4, h5, h6, [role=heading]").each((_, el) => {
+    const tag = el.name ? el.name.toLowerCase() : "";
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    const isNativeHeading = /^h[1-6]$/.test(tag);
+
+    const actsAsHeading = role === "heading" || (isNativeHeading && role === "");
+    if (!actsAsHeading) return;
+    if (isHidden($, el)) return;
+
+    let level;
+    if (role === "heading") {
+      const parsed = parseInt(($(el).attr("aria-level") || "").trim(), 10);
+      level = Number.isFinite(parsed) && parsed >= 1 ? parsed : 2;
+    } else {
+      level = parseInt(tag.substring(1), 10);
+    }
 
     if (lastLevel && level - lastLevel > 1) {
       errors.push({
         file,
-        line: lineNumber,
+        line: getLine($, el, content),
         type: "heading-order",
-        message: `<${el.name}> follows <h${lastLevel}>`,
+        message: `Heading level jumps from h${lastLevel} to h${level} (skips a level)`,
       });
     }
-
     lastLevel = level;
   });
 
   return errors;
-}
+};
+
+
+/***/ }),
+
+/***/ 9391:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+// BCP-47-ish: a primary language subtag plus optional subtags.
+const LANG_RE = /^[a-z]{2,3}(-[a-zA-Z0-9]{2,8})*$/i;
+
+/**
+ * Requires a valid `lang` on the document's <html> element. Only runs when
+ * <html> is literally present in the source (a synthesized <html> has a null
+ * sourceCodeLocation), so partial templates are exempt. A missing/empty lang, or
+ * a non-templated value that isn't a plausible BCP-47 tag, is an error.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} html-lang issues.
+ */
+module.exports = function htmlLang(content, file) {
+  const $ = loadDocument(content);
+  const html = $("html").get(0);
+  if (!html || !html.sourceCodeLocation) return [];
+
+  const line = getLine($, html, content);
+  const lang = $(html).attr("lang");
+
+  if (typeof lang !== "string" || lang.trim() === "") {
+    return [
+      {
+        file,
+        line,
+        type: "html-lang",
+        message: `<html> is missing a lang attribute`,
+      },
+    ];
+  }
+  if (!looksTemplated(lang) && !LANG_RE.test(lang.trim())) {
+    return [
+      {
+        file,
+        line,
+        type: "html-lang",
+        message: `<html lang="${lang}"> is not a valid BCP-47 language tag`,
+      },
+    ];
+  }
+  return [];
+};
 
 
 /***/ }),
@@ -97647,39 +99117,37 @@ module.exports = function headingOrder(content, file) {
 /***/ 9801:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
 
 /**
- * Checks that <iframe> elements have a non-empty, descriptive title attribute.
+ * Flags iframes lacking an accessible name (title, aria-label, or
+ * aria-labelledby). Hidden iframes (e.g. analytics/tracking frames marked
+ * aria-hidden or display:none) are skipped.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of iframe title issues.
+ * @returns {object[]} Missing iframe-title issues.
  */
 module.exports = function iframeTitles(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
   $("iframe").each((_, el) => {
-    const $el = $(el);
-    const title = $el.attr("title");
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    if (!title || title.trim() === "") {
+    if (isHidden($, el)) return;
+    if (getAccessibleName($, el) === "") {
       errors.push({
         file,
-        line: lineNumber,
+        line: getLine($, el, content),
         type: "iframe-title-missing",
-        message: `<iframe> is missing a non-empty 'title' attribute to describe its content`,
+        message: `<iframe> needs an accessible name (title or aria-label) describing its content`,
       });
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97687,56 +99155,78 @@ module.exports = function iframeTitles(content, file) {
 /***/ 8337:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { collectIds } = __nccwpck_require__(1512);
+const looksTemplated = __nccwpck_require__(8862);
+
+// Elements that a <label> can legitimately be associated with.
+const LABELABLE_SELECTOR =
+  "button, meter, output, progress, select, textarea, input:not([type=hidden])";
+
+/** True if a resolved element is a labelable form control. */
+function isLabelable($, el) {
+  const tag = el && el.name ? el.name.toLowerCase() : "";
+  if (["button", "meter", "output", "progress", "select", "textarea"].includes(tag)) {
+    return true;
+  }
+  if (tag === "input") return ($(el).attr("type") || "").toLowerCase() !== "hidden";
+  return false;
+}
 
 /**
- * Checks that each <label> element is properly associated with a form control.
- * It should either have a 'for' attribute pointing to an existing control ID
- * OR contain an input/select/textarea element inside.
+ * Checks that each <label> is associated with a labelable form control — either
+ * a `for` attribute resolving (via collectIds, no selector interpolation) to a
+ * labelable element, or a nested labelable control. Pointing `for` at a
+ * non-labelable element (e.g. a <div>) is flagged with a distinct message.
+ * Templated `for` values are skipped.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of label association errors.
+ * @returns {object[]} Label association issues.
  */
 module.exports = function labelsWithoutFor(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
   $("label").each((_, el) => {
     const $label = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
+    const line = getLine($, el, content);
     const forAttr = $label.attr("for");
 
-    if (forAttr) {
-      const inputMatch = $(`[id='${forAttr}']`);
-      if (!inputMatch.length) {
+    if (typeof forAttr === "string" && forAttr.trim() !== "") {
+      if (looksTemplated(forAttr)) return;
+      const id = forAttr.trim();
+      const target = collectIds($).byId.get(id);
+      if (!target) {
         errors.push({
           file,
-          line: lineNumber,
+          line,
           type: "label-for-missing",
-          message: `<label for="${forAttr}"> does not match any element with that ID`,
+          message: `<label for="${id}"> does not match any element id`,
         });
-      }
-    } else {
-      const hasNestedControl =
-        $label.find("input, select, textarea").length > 0;
-      if (!hasNestedControl) {
+      } else if (!isLabelable($, target)) {
         errors.push({
           file,
-          line: lineNumber,
-          type: "label-missing-for",
-          message: `<label> is not associated with any form control (missing 'for' or nested input)`,
+          line,
+          type: "label-for-missing",
+          message: `<label for="${id}"> points at <${target.name}>, which is not a labelable form control`,
         });
       }
+      return;
+    }
+
+    if ($label.find(LABELABLE_SELECTOR).length === 0) {
+      errors.push({
+        file,
+        line,
+        type: "label-missing-for",
+        message: `<label> is not associated with a form control (needs a for= or a nested control)`,
+      });
     }
   });
 
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97744,33 +99234,53 @@ module.exports = function labelsWithoutFor(content, file) {
 /***/ 3893:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
+const { loadDocument, getLine, isFullDocument } = __nccwpck_require__(7094);
+
+// Native landmark elements plus their ARIA role equivalents. Native <header>/
+// <footer> are treated as landmarks at the top level (the common case); a
+// present-but-scoped header/footer only makes this check more lenient, which is
+// acceptable for a warning.
+const LANDMARK_SELECTOR = [
+  "main",
+  "nav",
+  "header",
+  "footer",
+  "aside",
+  "[role=banner]",
+  "[role=complementary]",
+  "[role=contentinfo]",
+  "[role=form]",
+  "[role=main]",
+  "[role=navigation]",
+  "[role=region]",
+  "[role=search]",
+].join(", ");
 
 /**
- * Verifies the presence of at least one semantic landmark element.
- * Expected tags include <main>, <nav>, <header>, <footer>, <aside>.
+ * Warns when a full HTML document exposes no landmark regions. Only runs on full
+ * documents (isFullDocument on the raw source) — partial templates/fragments are
+ * exempt. Recognizes native landmark elements and ARIA landmark roles; the
+ * finding is anchored at the <body> line.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List containing missing landmark error, if any.
+ * @returns {object[]} A single missing-landmark issue, or none.
  */
 module.exports = function landmarkRoles(content, file) {
-  const $ = cheerio.load(content);
-  const landmarks = ["main", "nav", "header", "footer", "aside"];
-  const errors = [];
+  if (!isFullDocument(content)) return [];
+  const $ = loadDocument(content);
+  if ($(LANDMARK_SELECTOR).length > 0) return [];
 
-  const present = landmarks.filter((tag) => $(tag).length > 0);
-  if (present.length === 0) {
-    errors.push({
+  const body = $("body").get(0);
+  return [
+    {
       file,
-      line: 1,
+      line: body ? getLine($, body, content) : 1,
       type: "missing-landmark",
-      message: "No landmark elements (main, nav, header, footer, aside) found",
-    });
-  }
-
-  return errors;
-}
+      message: `No landmark regions found (main, nav, header, footer, aside, or ARIA landmark roles)`,
+    },
+  ];
+};
 
 
 /***/ }),
@@ -97778,49 +99288,331 @@ module.exports = function landmarkRoles(content, file) {
 /***/ 4384:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { collectIds } = __nccwpck_require__(1512);
+const looksTemplated = __nccwpck_require__(8862);
+
+const DEFAULT_PHRASES = [
+  "new tab",
+  "new window",
+  "opens in new",
+  "opens a new",
+  "opens in a new",
+];
+
+const DEFAULT_SR_CLASSES = [
+  "sr-only",
+  "visually-hidden",
+  "visuallyhidden",
+  "screen-reader-text",
+  "screen-reader-only",
+];
 
 /**
- * Checks if links opening in a new tab/window notify screen readers.
+ * Warns when a link with target="_blank" (case-insensitive) does not tell users
+ * it opens a new tab. A warning is suppressed when a "new tab/window" phrase
+ * appears in the link's visible text, aria-label, title, screen-reader-only
+ * note, or resolved aria-labelledby/aria-describedby text. Hidden links are
+ * skipped. Phrases and extra SR-only class names are configurable via
+ * `options["link-new-tab"]` for non-English projects.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of new tab warning issues.
+ * @param {object} [config] - Normalized config.
+ * @returns {object[]} New-tab warning issues.
  */
-module.exports = function linksOpenNewTab(content, file) {
-  const $ = cheerio.load(content);
+module.exports = function linksOpenNewTab(content, file, config = {}) {
+  const $ = loadDocument(content);
   const errors = [];
+  const options = (config.options && config.options["link-new-tab"]) || {};
+  const phrases = (
+    Array.isArray(options.phrases) && options.phrases.length
+      ? options.phrases
+      : DEFAULT_PHRASES
+  ).map((p) => String(p).toLowerCase());
+  const srClasses = DEFAULT_SR_CLASSES.concat(
+    Array.isArray(options.extraClasses) ? options.extraClasses : []
+  );
 
-  $("a[target='_blank']").each((_, el) => {
+  const mentionsNewTab = (text) => {
+    const t = (text || "").toLowerCase();
+    return phrases.some((p) => t.includes(p));
+  };
+
+  $("a").each((_, el) => {
     const $el = $(el);
-    const ariaLabel = $el.attr("aria-label") || "";
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
+    if (($el.attr("target") || "").trim().toLowerCase() !== "_blank") return;
+    if (isHidden($, el)) return;
 
-    const hasScreenReaderNote = $el
-      .find(".sr-only, .visually-hidden")
-      .filter((i, n) => {
-        const text = $(n).text().toLowerCase();
-        return text.includes("opens in a new tab") || text.includes("opens in new window");
-      }).length > 0;
+    const candidates = [
+      $el.text(),
+      $el.attr("aria-label") || "",
+      $el.attr("title") || "",
+    ];
 
-    const describesNewTab = ariaLabel.toLowerCase().includes("opens in a new tab") ||
-      ariaLabel.toLowerCase().includes("opens in new window");
+    for (const attr of ["aria-labelledby", "aria-describedby"]) {
+      const ref = $el.attr(attr);
+      if (ref && ref.trim() !== "" && !looksTemplated(ref)) {
+        const { byId } = collectIds($);
+        for (const id of ref.trim().split(/\s+/)) {
+          const target = byId.get(id);
+          if (target) candidates.push($(target).text());
+        }
+      }
+    }
 
-    if (!describesNewTab && !hasScreenReaderNote) {
+    const srSelector = srClasses.map((c) => `.${c}`).join(", ");
+    if (srSelector) {
+      $el.find(srSelector).each((_, n) => candidates.push($(n).text()));
+    }
+
+    if (candidates.some(mentionsNewTab)) return;
+
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "link-new-tab-warning",
+      message: `Link opens in a new tab (target="_blank") without warning users; add visible or screen-reader text`,
+    });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 7201:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+
+const UL_OL_ALLOWED = new Set(["li", "script", "template"]);
+const DL_ALLOWED = new Set(["dt", "dd", "div", "script", "template"]);
+const LI_PARENTS = new Set(["ul", "ol", "menu"]);
+
+/**
+ * Validates list structure per HTML content models:
+ *   - <ul>/<ol> may only have <li>/<script>/<template> element children (unless a
+ *     role repurposes the list);
+ *   - <li> must have a <ul>/<ol>/<menu> parent;
+ *   - <dl> may only have <dt>/<dd>/<div>/<script>/<template> element children.
+ * Only element children are inspected, so template control-flow (text nodes like
+ * `{% for %}`) produces no false positives.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} list-structure issues.
+ */
+module.exports = function listStructure(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+  const tagOf = (el) => (el && el.name ? el.name.toLowerCase() : "");
+
+  $("ul, ol").each((_, el) => {
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    if (role && role !== "list" && role !== "none" && role !== "presentation") {
+      return; // repurposed via role — not a plain list
+    }
+    $(el)
+      .children()
+      .each((_, child) => {
+        const tag = tagOf(child);
+        if (!UL_OL_ALLOWED.has(tag)) {
+          errors.push({
+            file,
+            line: getLine($, child, content),
+            type: "list-structure",
+            message: `<${tag}> is not allowed as a direct child of <${tagOf(el)}> (expected <li>)`,
+          });
+        }
+      });
+  });
+
+  $("li").each((_, el) => {
+    const parentTag = tagOf(el.parent);
+    if (!LI_PARENTS.has(parentTag)) {
       errors.push({
         file,
-        line: lineNumber,
-        type: "link-new-tab-warning",
-        message: `<a> with target="_blank" should inform users it opens in a new tab (e.g., via aria-label or screen reader note)`,
+        line: getLine($, el, content),
+        type: "list-structure",
+        message: `<li> must be a child of <ul>, <ol>, or <menu> (found in <${parentTag || "?"}>)`,
+      });
+    }
+  });
+
+  $("dl").each((_, el) => {
+    $(el)
+      .children()
+      .each((_, child) => {
+        const tag = tagOf(child);
+        if (!DL_ALLOWED.has(tag)) {
+          errors.push({
+            file,
+            line: getLine($, child, content),
+            type: "list-structure",
+            message: `<${tag}> is not allowed as a direct child of <dl> (expected <dt>/<dd>)`,
+          });
+        }
+      });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 6619:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+
+/**
+ * Warns about media without a text alternative: a non-hidden <video> lacking a
+ * captions/subtitles <track>, and any non-hidden <audio> (which needs a
+ * transcript). Warnings because captions/transcripts may live outside the
+ * markup; the rule is toggleable.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} media-captions issues.
+ */
+module.exports = function mediaCaptions(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("video").each((_, el) => {
+    if (isHidden($, el)) return;
+    const hasCaptions = $(el)
+      .find("track")
+      .toArray()
+      .some((t) => {
+        const kind = ($(t).attr("kind") || "").trim().toLowerCase();
+        return kind === "captions" || kind === "subtitles";
+      });
+    if (!hasCaptions) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "media-captions",
+        message: `<video> has no captions/subtitles track; add <track kind="captions">`,
+      });
+    }
+  });
+
+  $("audio").each((_, el) => {
+    if (isHidden($, el)) return;
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "media-captions",
+      message: `<audio> needs a text alternative (transcript) for users who cannot hear it`,
+    });
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 4724:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+
+// 20 hours, in seconds — delays at or above this are exempt (WCAG 2.2.1).
+const EXEMPT_DELAY = 72000;
+
+/**
+ * Flags `<meta http-equiv="refresh">` with a timed delay that reloads or
+ * redirects the page (0 < delay < 20h). A delay of 0 (an immediate redirect) and
+ * delays >= 20h are exempt.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} meta-refresh issues.
+ */
+module.exports = function metaRefresh(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("meta").each((_, el) => {
+    if (($(el).attr("http-equiv") || "").trim().toLowerCase() !== "refresh") return;
+    const value = ($(el).attr("content") || "").trim();
+    const delay = parseInt(value.split(/[;,\s]/)[0], 10);
+    if (Number.isFinite(delay) && delay > 0 && delay < EXEMPT_DELAY) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "meta-refresh",
+        message: `meta refresh reloads/redirects after ${delay}s; timed refreshes can disorient users`,
       });
     }
   });
 
   return errors;
-}
+};
+
+
+/***/ }),
+
+/***/ 6889:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+
+/**
+ * Flags a viewport meta tag that blocks or over-restricts zooming
+ * (`user-scalable=no`/`0`, or `maximum-scale` below 2), which prevents
+ * low-vision users from enlarging content.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} meta-viewport issues.
+ */
+module.exports = function metaViewport(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("meta").each((_, el) => {
+    if (($(el).attr("name") || "").trim().toLowerCase() !== "viewport") return;
+    const value = ($(el).attr("content") || "").toLowerCase();
+    if (!value) return;
+
+    const props = {};
+    for (const part of value.split(",")) {
+      const idx = part.indexOf("=");
+      if (idx === -1) continue;
+      props[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+    }
+
+    const line = getLine($, el, content);
+    const userScalable = props["user-scalable"];
+    const maxScale = parseFloat(props["maximum-scale"]);
+
+    if (userScalable === "no" || userScalable === "0") {
+      errors.push({
+        file,
+        line,
+        type: "meta-viewport",
+        message: `viewport meta disables zoom (user-scalable=${userScalable}); users must be able to zoom`,
+      });
+    } else if (Number.isFinite(maxScale) && maxScale < 2) {
+      errors.push({
+        file,
+        line,
+        type: "meta-viewport",
+        message: `viewport meta caps zoom (maximum-scale=${props["maximum-scale"]}); allow at least 2x`,
+      });
+    }
+  });
+
+  return errors;
+};
 
 
 /***/ }),
@@ -97828,55 +99620,90 @@ module.exports = function linksOpenNewTab(content, file) {
 /***/ 7141:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
+const { collectIds } = __nccwpck_require__(1512);
+const looksTemplated = __nccwpck_require__(8862);
+
+/** True if a landmark has a distinguishing name (NOT counting text content). */
+function hasDistinguishingName($, el) {
+  const $el = $(el);
+  const ariaLabel = $el.attr("aria-label");
+  if (typeof ariaLabel === "string" && ariaLabel.trim() !== "") return true;
+
+  const labelledby = $el.attr("aria-labelledby");
+  if (typeof labelledby === "string" && labelledby.trim() !== "") {
+    if (looksTemplated(labelledby)) return true;
+    const { idSet } = collectIds($);
+    if (labelledby.trim().split(/\s+/).some((id) => idSet.has(id))) return true;
+  }
+
+  const title = $el.attr("title");
+  if (typeof title === "string" && title.trim() !== "") return true;
+  return false;
+}
 
 /**
- * Checks if important elements lack visible text or an ARIA label.
- * Applies to elements like buttons, links, SVGs, etc.
+ * Two focused accessible-name checks (the previous broad version was a
+ * false-positive factory; buttons/links/inputs are now owned by dedicated
+ * rules):
+ *   (a) <svg> icons with no accessible name — always for svg[role=img], and for
+ *       a bare <svg> unless it is an icon inside a *named* link/button.
+ *   (b) Repeated same-type landmarks (>=2 nav/[role=navigation] or
+ *       aside/[role=complementary]) that lack a distinguishing name.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of missing ARIA label issues.
+ * @returns {object[]} Missing-accessible-name issues.
  */
 module.exports = function missingAria(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
-  const selectors = [
-    "button",
-    "a[href]",
-    'input[type="text"]',
-    "svg",
-    "form",
-    "section",
-    "nav",
-    "aside",
-    "main",
-    "dialog",
-  ];
+  // (a) SVG icons without an accessible name.
+  $("svg").each((_, el) => {
+    if (isHidden($, el)) return;
+    if (getAccessibleName($, el) !== "") return;
 
-  $(selectors.join(",")).each((_, el) => {
-    const $el = $(el);
-    const html = $.html(el);
-    const tagIndex = content.indexOf(html);
-    const lineNumber = getLineNumber(content, tagIndex);
-
-    const hasAria = $el.attr("aria-label") || $el.attr("aria-labelledby");
-    const hasText = $el.text().trim().length > 0;
-
-    if (!hasAria && !hasText) {
-      errors.push({
-        file,
-        line: lineNumber,
-        type: "missing-aria",
-        message: `<${el.name}> element should have an aria-label or visible text`,
-      });
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    if (role !== "img") {
+      const owner = $(el).closest("a[href], button, [role=button]");
+      if (owner.length && getAccessibleName($, owner.get(0)) !== "") return; // decorative icon
     }
+
+    errors.push({
+      file,
+      line: getLine($, el, content),
+      type: "missing-aria",
+      message: `<svg> has no accessible name; add a <title>, aria-label, or aria-hidden="true" if decorative`,
+    });
   });
 
+  // (b) Repeated landmarks of the same type need distinguishing names.
+  const groups = [
+    { selector: "nav, [role=navigation]", label: "navigation" },
+    { selector: "aside, [role=complementary]", label: "complementary" },
+  ];
+  for (const { selector, label } of groups) {
+    const nodes = $(selector)
+      .toArray()
+      .filter((el) => !isHidden($, el));
+    if (nodes.length < 2) continue;
+    for (const el of nodes) {
+      if (!hasDistinguishingName($, el)) {
+        errors.push({
+          file,
+          line: getLine($, el, content),
+          type: "missing-aria",
+          message: `Multiple ${label} landmarks — this one needs a distinguishing aria-label or aria-labelledby`,
+        });
+      }
+    }
+  }
+
   return errors;
-}
+};
 
 
 /***/ }),
@@ -97884,38 +99711,183 @@ module.exports = function missingAria(content, file) {
 /***/ 1141:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
 
 /**
- * Checks that there is only one <h1> on the page.
+ * Flags a page that exposes more than one top-level (level-1) heading. Counts
+ * non-hidden native <h1> (unless aria-level overrides it away from 1) and
+ * role="heading" with aria-level="1". Each offending heading is reported at its
+ * own line.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of multiple H1 tag warnings.
+ * @returns {object[]} Multiple-h1 issues.
  */
 module.exports = function multipleH1(content, file) {
-  const $ = cheerio.load(content);
-  const h1s = $("h1");
+  const $ = loadDocument(content);
+  const level1 = [];
 
-  if (h1s.length > 1) {
-    return h1s
-      .map((_, el) => {
-        const html = $.html(el);
-        const tagIndex = content.indexOf(html);
-        const lineNumber = getLineNumber(content, tagIndex);
-        return {
-          file,
-          line: lineNumber,
-          type: "multiple-h1",
-          message: `Multiple <h1> tags found (${h1s.length} total)`,
-        };
-      })
-      .get();
-  }
+  $("h1, [role=heading]").each((_, el) => {
+    const tag = el.name ? el.name.toLowerCase() : "";
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    const ariaLevel = ($(el).attr("aria-level") || "").trim();
 
-  return [];
-}
+    let isLevel1 = false;
+    if (tag === "h1" && role !== "presentation" && role !== "none") {
+      isLevel1 = ariaLevel === "" || ariaLevel === "1";
+    } else if (role === "heading" && ariaLevel === "1") {
+      isLevel1 = true;
+    }
+    if (!isLevel1) return;
+    if (isHidden($, el)) return;
+
+    level1.push(el);
+  });
+
+  if (level1.length <= 1) return [];
+
+  return level1.map((el) => ({
+    file,
+    line: getLine($, el, content),
+    type: "multiple-h1",
+    message: `Multiple top-level headings found (${level1.length} total); use a single h1 per page`,
+  }));
+};
+
+
+/***/ }),
+
+/***/ 5574:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine, isFullDocument } = __nccwpck_require__(7094);
+
+/**
+ * Warns when a full document offers no obvious way to reach the main content.
+ * Passes if any of these exist: an in-page fragment link among the first three
+ * links (a skip link), a <main>/[role=main], or an <h1>. Only runs on full
+ * documents; the finding is anchored at <body>.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} skip-link issues.
+ */
+module.exports = function skipLink(content, file) {
+  if (!isFullDocument(content)) return [];
+  const $ = loadDocument(content);
+  const body = $("body").get(0);
+  if (!body) return [];
+
+  if ($("main, [role=main]").length > 0) return [];
+  if ($("h1").length > 0) return [];
+
+  const firstThreeLinks = $("a[href]").toArray().slice(0, 3);
+  const hasSkipLink = firstThreeLinks.some((a) => {
+    const href = ($(a).attr("href") || "").trim();
+    return href.startsWith("#") && href.length > 1;
+  });
+  if (hasSkipLink) return [];
+
+  return [
+    {
+      file,
+      line: getLine($, body, content),
+      type: "skip-link",
+      message: `No skip link, <main>, or <h1> found; provide a way to skip to the main content`,
+    },
+  ];
+};
+
+
+/***/ }),
+
+/***/ 7964:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const looksTemplated = __nccwpck_require__(8862);
+
+/**
+ * Warns about positive `tabindex` values, which override the natural DOM focus
+ * order and are hard to maintain. Templated values are skipped.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} tabindex-positive issues.
+ */
+module.exports = function tabindexPositive(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("[tabindex]").each((_, el) => {
+    const raw = $(el).attr("tabindex");
+    if (typeof raw !== "string" || looksTemplated(raw)) return;
+    const value = parseInt(raw.trim(), 10);
+    if (Number.isFinite(value) && value > 0) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "tabindex-positive",
+        message: `tabindex="${raw.trim()}" is positive; use 0 or -1 so it doesn't disrupt the focus order`,
+      });
+    }
+  });
+
+  return errors;
+};
+
+
+/***/ }),
+
+/***/ 5048:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+
+/**
+ * Warns about likely data tables that have no header cells. A table is treated
+ * as a data table (heuristic) when it has >= 2 rows, at least two rows with >= 2
+ * cells, is not role="presentation"/"none", and is not hidden. Headers are
+ * recognized via <th>, [scope], or td[headers]. This is a warning because layout
+ * and data tables are not always distinguishable from markup alone.
+ *
+ * @param {string} content - HTML content.
+ * @param {string} file - File name.
+ * @returns {object[]} table-headers issues.
+ */
+module.exports = function tableHeaders(content, file) {
+  const $ = loadDocument(content);
+  const errors = [];
+
+  $("table").each((_, el) => {
+    const $t = $(el);
+    const role = ($t.attr("role") || "").trim().toLowerCase();
+    if (role === "presentation" || role === "none") return;
+    if (isHidden($, el)) return;
+
+    const rows = $t.find("tr").toArray();
+    if (rows.length < 2) return;
+    const multiCellRows = rows.filter((tr) => $(tr).children("td, th").length >= 2);
+    if (multiCellRows.length < 2) return;
+
+    const hasHeaders =
+      $t.find("th").length > 0 ||
+      $t.find("[scope]").length > 0 ||
+      $t.find("td[headers]").length > 0;
+    if (!hasHeaders) {
+      errors.push({
+        file,
+        line: getLine($, el, content),
+        type: "table-headers",
+        message: `Data table has no header cells; add <th> (with scope) or role="presentation" if it is a layout table`,
+      });
+    }
+  });
+
+  return errors;
+};
 
 
 /***/ }),
@@ -97923,42 +99895,220 @@ module.exports = function multipleH1(content, file) {
 /***/ 9612:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-const cheerio = __nccwpck_require__(6962);
-const getLineNumber = __nccwpck_require__(6605);
+const { loadDocument, getLine } = __nccwpck_require__(7094);
+const { isHidden } = __nccwpck_require__(4472);
+const { getAccessibleName } = __nccwpck_require__(1857);
+
+// Input types that do not need a <label>-style name here (handled elsewhere or
+// named by their value / UA default).
+const EXEMPT_INPUT_TYPES = new Set([
+  "hidden",
+  "submit",
+  "reset",
+  "button",
+  "image",
+]);
 
 /**
- * Checks if checkboxes and radios are properly labeled.
+ * Flags form controls (all name-needing <input> types plus <select> and
+ * <textarea>) that have no accessible name. An accessible name may come from an
+ * associated <label> (for= or wrapping), aria-label, aria-labelledby, or title.
+ * A control named only by its `placeholder` is a softer warning
+ * (input-placeholder-only), since placeholders vanish once typing begins.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of form label errors.
+ * @returns {object[]} Unlabeled-control issues.
  */
 module.exports = function unlabeledInputs(content, file) {
-  const $ = cheerio.load(content);
+  const $ = loadDocument(content);
   const errors = [];
 
-  $("input[type='checkbox'], input[type='radio']").each((_, el) => {
+  $("input, select, textarea").each((_, el) => {
     const $el = $(el);
-    const id = $el.attr("id");
-    const label = id && $(`label[for='${id}']`).length > 0;
-    const wrapped = $el.parents("label").length > 0;
+    const tag = el.name ? el.name.toLowerCase() : "";
+    const type = ($el.attr("type") || "text").toLowerCase();
+    if (tag === "input" && EXEMPT_INPUT_TYPES.has(type)) return;
+    if (isHidden($, el)) return;
+    if (getAccessibleName($, el) !== "") return;
 
-    if (!label && !wrapped) {
-      const html = $.html(el);
-      const tagIndex = content.indexOf(html);
-      const lineNumber = getLineNumber(content, tagIndex);
-
+    const line = getLine($, el, content);
+    const placeholder = $el.attr("placeholder");
+    if (typeof placeholder === "string" && placeholder.trim() !== "") {
       errors.push({
         file,
-        line: lineNumber,
+        line,
+        type: "input-placeholder-only",
+        message: `<${tag}> is labeled only by its placeholder; add a real <label> (placeholders disappear on input)`,
+      });
+    } else {
+      const shown = tag === "input" ? `<input type="${type}">` : `<${tag}>`;
+      errors.push({
+        file,
+        line,
         type: "input-unlabeled",
-        message: `<input type="${$el.attr("type")}"> is not associated with a label`,
+        message: `${shown} has no associated label or accessible name`,
       });
     }
   });
 
   return errors;
+};
+
+
+/***/ }),
+
+/***/ 1857:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const { collectIds } = __nccwpck_require__(1512);
+const looksTemplated = __nccwpck_require__(8862);
+
+// Elements that can be named by an associated <label>.
+const LABELABLE = new Set([
+  "input",
+  "select",
+  "textarea",
+  "button",
+  "meter",
+  "output",
+  "progress",
+]);
+
+// Sentinel returned when a name provably exists but cannot be computed
+// statically (e.g. aria-labelledby points at a templated id). Non-empty, so
+// callers that test `!== ""` treat the element as named.
+const TEMPLATED = " templated";
+
+/** Minimal HTML escape so alt text is inserted as text, not parsed as markup. */
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
+/**
+ * Extracts visible text for naming: drops aria-hidden subtrees, substitutes
+ * descendant `<img alt>` with its alt text, and collapses whitespace. In JS a
+ * non-breaking space is matched by `\s`, so `&nbsp;` normalizes away.
+ */
+function extractText($, el, stripControls) {
+  const $clone = $(el).clone();
+  if (stripControls) $clone.find("input, select, textarea, button").remove();
+  $clone.find('[aria-hidden="true"]').remove();
+  $clone.find("img[alt]").each((_, img) => {
+    const alt = $(img).attr("alt") || "";
+    $(img).replaceWith(alt ? ` ${escapeHtml(alt)} ` : "");
+  });
+  return $clone.text().replace(/\s+/g, " ").trim();
+}
+
+/** Resolves the text of the <label> associated with a form control, if any. */
+function findAssociatedLabel($, el) {
+  const $el = $(el);
+
+  // A wrapping <label> takes precedence.
+  const wrapping = $el.closest("label");
+  if (wrapping.length) {
+    const text = extractText($, wrapping.get(0), true);
+    if (text !== "") return text;
+  }
+
+  // <label for="id"> — matched via JS comparison, never selector interpolation.
+  const rawId = $el.attr("id");
+  if (typeof rawId === "string" && rawId.trim() !== "" && !looksTemplated(rawId)) {
+    const id = rawId.trim();
+    let found = "";
+    $("label[for]").each((_, labelEl) => {
+      if (found !== "") return;
+      const forVal = $(labelEl).attr("for");
+      if (typeof forVal === "string" && forVal.trim() === id) {
+        found = extractText($, labelEl, true);
+      }
+    });
+    if (found !== "") return found;
+  }
+
+  return "";
+}
+
+/**
+ * Computes a simplified accessible name for an element.
+ *
+ * A pragmatic subset of the W3C accname algorithm, sufficient for static
+ * template linting. Resolution order:
+ *   1. aria-labelledby — whitespace-separated id refs resolved via collectIds;
+ *      a templated value is assumed to resolve to a name.
+ *   2. aria-label
+ *   3. Native semantics — <img>/<area>/<input type=image> alt;
+ *      <input type=button|submit|reset> value; a form control's associated
+ *      <label>; <svg>'s direct child <title>.
+ *   4. title attribute
+ *   5. Text content (aria-hidden removed, descendant <img alt> counted).
+ *
+ * Deliberate non-goals: no full recursion into referenced subtrees, no CSS
+ * (::before/::after, stylesheet display:none), and `placeholder` is NOT treated
+ * as an accessible name.
+ *
+ * @param {import('cheerio').CheerioAPI} $ - Loaded cheerio instance.
+ * @param {any} el - Element to name.
+ * @returns {string} The trimmed accessible name, or "" if none.
+ */
+function getAccessibleName($, el) {
+  if (!el) return "";
+  const $el = $(el);
+  const tag = el.name ? el.name.toLowerCase() : "";
+
+  // 1. aria-labelledby
+  const labelledby = $el.attr("aria-labelledby");
+  if (typeof labelledby === "string" && labelledby.trim() !== "") {
+    if (looksTemplated(labelledby)) return TEMPLATED;
+    const { byId } = collectIds($);
+    const parts = [];
+    for (const id of labelledby.trim().split(/\s+/)) {
+      const target = byId.get(id);
+      if (target) parts.push(extractText($, target, false));
+    }
+    const name = parts.join(" ").replace(/\s+/g, " ").trim();
+    if (name !== "") return name;
+    // Broken/empty references fall through (ariaLabels reports the breakage).
+  }
+
+  // 2. aria-label
+  const ariaLabel = $el.attr("aria-label");
+  if (typeof ariaLabel === "string" && ariaLabel.trim() !== "") {
+    return ariaLabel.trim();
+  }
+
+  // 3. Native semantics
+  const type = (($el.attr("type") || "") + "").toLowerCase();
+  if (tag === "img" || tag === "area" || (tag === "input" && type === "image")) {
+    const alt = $el.attr("alt");
+    if (typeof alt === "string" && alt.trim() !== "") return alt.trim();
+  }
+  if (tag === "input" && (type === "button" || type === "submit" || type === "reset")) {
+    const value = $el.attr("value");
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  if (LABELABLE.has(tag)) {
+    const labelText = findAssociatedLabel($, el);
+    if (labelText !== "") return labelText;
+  }
+  if (tag === "svg") {
+    const titleEl = $el.children("title").first();
+    if (titleEl.length) {
+      const t = titleEl.text().replace(/\s+/g, " ").trim();
+      if (t !== "") return t;
+    }
+  }
+
+  // 4. title attribute
+  const title = $el.attr("title");
+  if (typeof title === "string" && title.trim() !== "") return title.trim();
+
+  // 5. Text content
+  return extractText($, el, false);
+}
+
+module.exports = { getAccessibleName };
 
 
 /***/ }),
@@ -97969,46 +100119,271 @@ module.exports = function unlabeledInputs(content, file) {
 const fs = __nccwpck_require__(9896);
 const chalk = __nccwpck_require__(465);
 
+const DEFAULT_CONFIG_PATH = "a11y.config.json";
+
+// Formerly hardcoded at the top of index.js; the single source of defaults now.
+const DEFAULT_ALLOWED_EXTENSIONS = [
+  ".latte",
+  ".html",
+  ".php",
+  ".twig",
+  ".edge",
+  ".tsx",
+  ".jsx",
+];
+
+const DEFAULT_EXCLUDED_DIRS = [
+  "node_modules",
+  "vendor",
+  "dist",
+  "build",
+  "temp",
+  ".idea",
+  ".git",
+  "log",
+  "bin",
+];
+
 /**
- * Loads config with defaults if missing values.
+ * Resolves a config "set" field (allowedExtensions / excludedDirs) which may be:
+ *   - an object map `{ key: boolean }` — MERGES over defaults (true adds, false
+ *     removes). This is the legacy shape shipped in a11y.config.json.
+ *   - an array of strings — REPLACES the defaults entirely.
+ *   - anything else / absent — the defaults, unchanged.
  *
- * @param {string} configFile
- * @returns {object} Normalized config object
+ * @param {*} value - Raw config value.
+ * @param {string[]} defaults - Default members.
+ * @returns {string[]} Resolved member list.
  */
-module.exports = function configuration(configFile) {
-  let config = {};
-  try {
-    config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
-  } catch (err) {
-    console.warn(chalk.yellow("⚠️  No config file found or invalid JSON. Using default rules."));
-    config.rules = {};
-    // config.allowedExtensions = {};
-    // config.excludedDirs = {};
+function resolveSet(value, defaults) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.filter((v) => typeof v === "string"))];
   }
-
-  config.rules ??= {};
-  // config.allowedExtensions ??= {};
-  // config.excludedDirs ??= {};
-
-  return config;
+  if (value && typeof value === "object") {
+    const set = new Set(defaults);
+    for (const [key, enabled] of Object.entries(value)) {
+      if (enabled === false) set.delete(key);
+      else if (enabled === true) set.add(key);
+    }
+    return [...set];
+  }
+  return [...defaults];
 }
+
+/**
+ * Loads and normalizes an a11y config, filling in defaults for anything absent.
+ * A missing file yields silent defaults; malformed JSON (or other read errors)
+ * prints a stderr warning and falls back to defaults. The path is cwd-relative.
+ *
+ * @param {string} [configPath="a11y.config.json"] - Path to the config file.
+ * @returns {{
+ *   rules: Object<string,boolean>,
+ *   options: Object<string,object>,
+ *   allowedExtensions: string[],
+ *   excludedDirs: string[]
+ * }} Normalized config.
+ */
+function loadConfig(configPath = DEFAULT_CONFIG_PATH) {
+  let raw = {};
+  try {
+    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      process.stderr.write(
+        chalk.yellow(
+          `⚠️  Could not read config at ${configPath} (${err.message}). Using defaults.\n`
+        )
+      );
+    }
+    raw = {};
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
+
+  return {
+    rules:
+      raw.rules && typeof raw.rules === "object" && !Array.isArray(raw.rules)
+        ? raw.rules
+        : {},
+    options:
+      raw.options && typeof raw.options === "object" && !Array.isArray(raw.options)
+        ? raw.options
+        : {},
+    allowedExtensions: resolveSet(raw.allowedExtensions, DEFAULT_ALLOWED_EXTENSIONS),
+    excludedDirs: resolveSet(raw.excludedDirs, DEFAULT_EXCLUDED_DIRS),
+  };
+}
+
+module.exports = loadConfig;
+module.exports.loadConfig = loadConfig;
+module.exports.DEFAULT_ALLOWED_EXTENSIONS = DEFAULT_ALLOWED_EXTENSIONS;
+module.exports.DEFAULT_EXCLUDED_DIRS = DEFAULT_EXCLUDED_DIRS;
 
 
 /***/ }),
 
-/***/ 6605:
-/***/ ((module) => {
+/***/ 7094:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const cheerio = __nccwpck_require__(6962);
+
+// Single-entry parse cache. Every rule for a given file receives the same
+// `content` string reference, so keying on identity turns ~N parses per file
+// into 1. (String === compares by value in JS, so two files with byte-identical
+// content also share a parse — harmless, since locations are identical.)
+let lastContent = null;
+let lastDoc = null;
 
 /**
- * Returns the line number where a specific tag index appears in the content.
+ * Loads HTML/template source with parse5 source-location tracking enabled,
+ * memoizing the most recent parse.
  *
- * @param {string} content - File content as a string.
- * @param {number} tagIndex - Index of the tag within the content.
- * @returns {number} Line number (1-based).
+ * @param {string} content - Raw HTML/template source.
+ * @returns {import('cheerio').CheerioAPI} Loaded cheerio instance.
  */
-module.exports = function getLineNumber(content, tagIndex) {
-  return content.slice(0, tagIndex).split("\n").length;
+function loadDocument(content) {
+  if (lastContent === content && lastDoc) return lastDoc;
+  const $ = cheerio.load(content, { sourceCodeLocationInfo: true });
+  lastContent = content;
+  lastDoc = $;
+  return $;
 }
+
+/** Counts newlines up to `offset` to yield a 1-based line number. */
+function offsetToLine(content, offset) {
+  let line = 1;
+  const end = Math.min(offset, content.length);
+  for (let i = 0; i < end; i++) {
+    if (content.charCodeAt(i) === 10 /* \n */) line++;
+  }
+  return line;
+}
+
+/**
+ * Resolves the source location of an element. Fallback chain:
+ *   1. parse5 `sourceCodeLocation` (accurate against RAW source — template noise
+ *      does not shift it; implied html/head/body have `null` location)
+ *   2. cheerio `startIndex`
+ *   3. legacy `indexOf` of the re-serialized element, only when it matches
+ *   4. `{ line: 1 }`
+ *
+ * @param {import('cheerio').CheerioAPI} $ - Loaded cheerio instance.
+ * @param {any} el - Element to locate.
+ * @param {string} content - Raw source (for the offset/legacy fallbacks).
+ * @returns {{ line: number, column: number|null, offset: number|null }}
+ */
+function getLocation($, el, content) {
+  const loc = el && el.sourceCodeLocation;
+  if (loc && typeof loc.startLine === "number") {
+    return {
+      line: loc.startLine,
+      column: typeof loc.startCol === "number" ? loc.startCol : null,
+      offset: typeof loc.startOffset === "number" ? loc.startOffset : null,
+    };
+  }
+  if (el && typeof el.startIndex === "number" && el.startIndex >= 0) {
+    return {
+      line: offsetToLine(content, el.startIndex),
+      column: null,
+      offset: el.startIndex,
+    };
+  }
+  try {
+    const html = $.html(el);
+    const idx = content.indexOf(html);
+    if (idx !== -1) {
+      return { line: offsetToLine(content, idx), column: null, offset: idx };
+    }
+  } catch (_) {
+    /* fall through */
+  }
+  return { line: 1, column: null, offset: null };
+}
+
+/**
+ * Convenience wrapper: the 1-based start line of an element.
+ *
+ * @param {import('cheerio').CheerioAPI} $ - Loaded cheerio instance.
+ * @param {any} el - Element to locate.
+ * @param {string} content - Raw source.
+ * @returns {number} 1-based line number.
+ */
+function getLine($, el, content) {
+  return getLocation($, el, content).line;
+}
+
+/**
+ * Heuristically decides whether the raw source is a full HTML document (rather
+ * than a partial template/fragment). Tests the RAW source — never the DOM,
+ * because cheerio synthesizes html/head/body for fragments.
+ *
+ * @param {string} content - Raw source.
+ * @returns {boolean} True if the source looks like a complete document.
+ */
+function isFullDocument(content) {
+  return /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i.test(content);
+}
+
+module.exports = { loadDocument, getLocation, getLine, isFullDocument };
+
+
+/***/ }),
+
+/***/ 1512:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+const looksTemplated = __nccwpck_require__(8862);
+
+// Memoize per-document so the id index is built once even though many rules
+// ask for it. Keyed on the document root node; entries are GC'd with the doc.
+const cache = new WeakMap();
+
+/**
+ * Collects every element id in a document, once per document.
+ *
+ * ids are trimmed before indexing; empty and templated ids (e.g. `{{ id }}`)
+ * are ignored. Consumers MUST trim their lookup values too so both sides match
+ * consistently. Using a Map/Set for lookups — instead of `$("#" + id)` — avoids
+ * crashing on ids that contain CSS-selector metacharacters (e.g. `a.b`, `x:y`),
+ * which is the source of the selector-injection crash class in the legacy code.
+ *
+ * @param {import('cheerio').CheerioAPI} $ - Loaded cheerio instance.
+ * @returns {{
+ *   idSet: Set<string>,
+ *   byId: Map<string, any>,
+ *   duplicates: Map<string, any[]>
+ * }} idSet: all valid ids; byId: id -> first element with that id;
+ *    duplicates: id -> elements (length >= 2) sharing it, in document order.
+ */
+function collectIds($) {
+  const root = $.root().get(0);
+  if (root && cache.has(root)) return cache.get(root);
+
+  const idSet = new Set();
+  const byId = new Map();
+  const occurrences = new Map();
+
+  $("[id]").each((_, el) => {
+    const raw = $(el).attr("id");
+    if (typeof raw !== "string") return;
+    const id = raw.trim();
+    if (id === "" || looksTemplated(id)) return;
+    idSet.add(id);
+    if (!byId.has(id)) byId.set(id, el);
+    if (!occurrences.has(id)) occurrences.set(id, []);
+    occurrences.get(id).push(el);
+  });
+
+  const duplicates = new Map();
+  for (const [id, els] of occurrences) {
+    if (els.length > 1) duplicates.set(id, els);
+  }
+
+  const result = { idSet, byId, duplicates };
+  if (root) cache.set(root, result);
+  return result;
+}
+
+module.exports = { collectIds };
 
 
 /***/ }),
@@ -98017,83 +100392,220 @@ module.exports = function getLineNumber(content, tagIndex) {
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 const chalk = __nccwpck_require__(465);
+const { typeMeta } = __nccwpck_require__(7773);
 
 /**
- * Groups an array of errors by their `type` property.
- * @param {object[]} errors - List of error objects.
- * @returns {object} Errors grouped by type.
+ * Metadata for a type, with a safe fallback for unregistered types so the
+ * logger never throws on unexpected input.
  */
-function groupErrors(errors) {
-  return errors.reduce((acc, error) => {
-    if (!acc[error.type]) acc[error.type] = [];
-    acc[error.type].push(error);
-    return acc;
-  }, {});
+function metaFor(type) {
+  return (
+    typeMeta[type] || {
+      severity: "error",
+      label: type,
+      emoji: "•",
+      wcag: [],
+      hint: null,
+    }
+  );
+}
+
+/** Effective severity of an issue (enriched field, or looked up by type). */
+function severityOf(issue) {
+  return issue.severity || metaFor(issue.type).severity;
+}
+
+/** Groups issues by type into a Map preserving insertion order. */
+function groupByType(issues) {
+  const grouped = new Map();
+  for (const issue of issues) {
+    if (!grouped.has(issue.type)) grouped.set(issue.type, []);
+    grouped.get(issue.type).push(issue);
+  }
+  return grouped;
+}
+
+/** Orders types: errors before warnings, then alphabetically. */
+function orderTypes(types) {
+  return [...types].sort((a, b) => {
+    const sa = metaFor(a).severity;
+    const sb = metaFor(b).severity;
+    if (sa !== sb) return sa === "error" ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
 }
 
 /**
- * Prints detailed accessibility issues to the console.
- * Issues are grouped by type with color-coded headings.
- * @param {object[]} errors - List of error objects.
+ * Prints the grouped, color-coded accessibility report to stdout. The banner is
+ * intentionally on stdout (not stderr) so CI greps of stdout can detect it.
+ *
+ * @param {object[]} issues - Enriched issue objects.
  */
-function printErrors(errors) {
-  const grouped = groupErrors(errors);
+function printErrors(issues) {
+  const grouped = groupByType(issues);
 
-  const typeLabels = {
-    "heading-order": chalk.yellow.bold("📐 Heading Order"),
-    "heading-empty": chalk.red.bold("❗ Empty Headings"),
-    "missing-alt": chalk.cyan.bold("🖼️  Missing ALT"),
-    "alt-empty": chalk.white.bold("⬜  AL T Empty"),
-    "alt-too-long": chalk.red.bold("↔️  ALT Too Long"),
-    "alt-decorative-incorrect": chalk.gray.bold("🌈  ALT Decorative"),
-    "alt-functional-empty": chalk.blueBright.bold("🔗  ALT Functional"),
-    "aria-invalid": chalk.magenta.bold("♿  ARIA Issues"),
-    "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
-    "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
-    "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
-    "contrast": chalk.red.bold("🎨  Contrast Issues"),
-    "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
-    "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
-    "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
-    "multiple-h1": chalk.yellow.bold("🧱  Multiple H1s"),
-    "input-unlabeled": chalk.magenta.bold("🔘  Unlabeled Checkboxes/Radios"),
-    "empty-link": chalk.red.bold("📭  Empty or Useless Link"),
-    "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
-    "link-new-tab-warning": chalk.yellow.bold("🧭  New Tab Warning"),
-  };
+  console.log(chalk.red.bold("\n🚨 Accessibility Issues Found:\n"));
 
-  console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
+  for (const type of orderTypes(grouped.keys())) {
+    const meta = metaFor(type);
+    const color = meta.severity === "error" ? chalk.red.bold : chalk.yellow.bold;
+    const wcag =
+      meta.wcag && meta.wcag.length
+        ? chalk.gray(`  WCAG ${meta.wcag.join(", ")}`)
+        : chalk.gray("  Best practice");
 
-  for (const [type, list] of Object.entries(grouped)) {
-    const label = typeLabels[type] || chalk.white.bold(type);
-    console.log(`\n${label}`);
-    for (const { file, line, message } of list) {
+    console.log(
+      `\n${meta.emoji}  ${color(meta.label)} ${chalk.gray(`[${meta.severity}]`)}${wcag}`
+    );
+
+    for (const issue of grouped.get(type)) {
       console.log(
-        `  ${chalk.gray("-")} ${chalk.green(file)}:${chalk.yellow(
-          line,
-        )} – ${chalk.white(message)}`,
+        `  ${chalk.gray("-")} ${chalk.green(issue.file)}:${chalk.yellow(
+          issue.line
+        )} – ${chalk.white(issue.message)}`
       );
+      if (issue.hint) console.log(`    ${chalk.gray(`↳ ${issue.hint}`)}`);
     }
   }
 }
 
 /**
- * Prints a summary table of accessibility issue counts by type.
- * @param {object[]} errors - List of error objects.
+ * Prints a summary table (Issue Type / Severity / Count) plus an eslint-style
+ * totals line to stdout.
+ *
+ * @param {object[]} issues - Enriched issue objects.
  */
-function printSummary(errors) {
-  const grouped = groupErrors(errors);
-  const summary = Object.entries(grouped).map(([type, list]) => ({
+function printSummary(issues) {
+  const grouped = groupByType(issues);
+  const rows = orderTypes(grouped.keys()).map((type) => ({
     "Issue Type": type,
-    Count: list.length,
+    Severity: metaFor(type).severity,
+    Count: grouped.get(type).length,
   }));
 
-  console.log(chalk.bold("\n📊 Accessibility Checksum Summary:"));
-  console.table(summary);
+  console.log(chalk.bold("\n📊 Accessibility Summary:"));
+  console.table(rows);
+
+  const errors = issues.filter((i) => severityOf(i) === "error").length;
+  const warnings = issues.length - errors;
+  const plural = (n) => (n === 1 ? "" : "s");
+  const color = errors > 0 ? chalk.red.bold : chalk.yellow.bold;
+  console.log(
+    color(
+      `\n✖ ${issues.length} problem${plural(issues.length)} ` +
+        `(${errors} error${plural(errors)}, ${warnings} warning${plural(warnings)})`
+    )
+  );
 }
 
+module.exports = { printErrors, printSummary };
 
-module.exports = { printErrors, printSummary }
+
+/***/ }),
+
+/***/ 8862:
+/***/ ((module) => {
+
+/**
+ * Heuristic: does a string contain template / interpolation syntax?
+ *
+ * Used to skip validation on attribute values that are computed at render time,
+ * so the tool does not emit false positives for e.g. `id="{{ user.id }}"` or
+ * `lang="{$locale}"`. Applied only to reference-like attribute values (id, for,
+ * aria-labelledby/describedby, lang, autocomplete, role, alt, …) — never to
+ * `style`, whose braces are meaningful CSS.
+ *
+ * Recognizes:
+ *   - Handlebars / Twig / Latte / Blade  `{{ … }}`
+ *   - Twig / Jinja / Latte control tags  `{% … %}`
+ *   - JS template literals               `${ … }`
+ *   - PHP short/long open tags           `<?php`, `<?=`, `<? `
+ *   - ASP / EJS / underscore             `<% … %>`
+ *   - single-brace (Latte / JSX / Angular / Vue) `{ … }`
+ *
+ * @param {string} value - Attribute value (or any string) to test.
+ * @returns {boolean} True if the value looks templated.
+ */
+module.exports = function looksTemplated(value) {
+  if (typeof value !== "string" || value === "") return false;
+  return (
+    /\{\{[\s\S]*?\}\}/.test(value) || // {{ ... }}
+    /\{%[\s\S]*?%\}/.test(value) || // {% ... %}
+    /\$\{[\s\S]*?\}/.test(value) || // ${ ... }
+    /<\?(?:php|=|\s|$)/i.test(value) || // <?php  <?=  <?
+    /<%[\s\S]*?%>/.test(value) || // <% ... %>
+    /\{[^{}]*\}/.test(value) // { ... } single-brace
+  );
+};
+
+
+/***/ }),
+
+/***/ 4472:
+/***/ ((module) => {
+
+/**
+ * Parses an inline `style` attribute string into a `{ property: value }` map.
+ * Property names are lowercased and trimmed; on duplicate declarations the last
+ * one wins (matching CSS cascade for a single declaration block).
+ *
+ * @param {string} str - The value of a `style` attribute.
+ * @returns {Object<string,string>} Map of declaration property -> raw value.
+ */
+function parseInlineStyle(str) {
+  const out = {};
+  if (typeof str !== "string") return out;
+  for (const decl of str.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx === -1) continue;
+    const key = decl.slice(0, idx).trim().toLowerCase();
+    const value = decl.slice(idx + 1).trim();
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
+/** First whitespace-delimited token of a CSS value, lowercased. */
+function firstToken(value) {
+  return value.trim().toLowerCase().split(/\s+/)[0];
+}
+
+/**
+ * Determines whether an element is hidden from assistive technology, taking the
+ * element itself and all of its ancestors into account.
+ *
+ * An element is treated as hidden if it (or an ancestor) has any of:
+ *   - `aria-hidden="true"`
+ *   - the boolean `hidden` attribute (any value)
+ *   - an inline style of `display:none` or `visibility:hidden`
+ *
+ * Only inline styles and attributes are considered — external or embedded CSS
+ * is not resolved (documented limitation). `!important` and vendor noise after
+ * the keyword are tolerated.
+ *
+ * @param {import('cheerio').CheerioAPI} $ - Loaded cheerio instance.
+ * @param {any} el - The element (DOM node) to test.
+ * @returns {boolean} True if the element or an ancestor is hidden.
+ */
+function isHidden($, el) {
+  const chain = [el, ...$(el).parents().toArray()];
+  for (const node of chain) {
+    const $node = $(node);
+    if ($node.attr("aria-hidden") === "true") return true;
+    if (typeof $node.attr("hidden") !== "undefined") return true;
+    const style = $node.attr("style");
+    if (style) {
+      const decls = parseInlineStyle(style);
+      if (decls.display && firstToken(decls.display) === "none") return true;
+      if (decls.visibility && firstToken(decls.visibility) === "hidden") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+module.exports = { isHidden, parseInlineStyle };
 
 
 /***/ }),
@@ -98184,6 +100696,14 @@ module.exports = /*#__PURE__*/JSON.parse('{"866":"IBM866","unicode-1-1-utf-8":"U
 "use strict";
 module.exports = /*#__PURE__*/JSON.parse('["UTF-8","IBM866","ISO-8859-2","ISO-8859-3","ISO-8859-4","ISO-8859-5","ISO-8859-6","ISO-8859-7","ISO-8859-8","ISO-8859-10","ISO-8859-13","ISO-8859-14","ISO-8859-15","ISO-8859-16","KOI8-R","KOI8-U","macintosh","windows-874","windows-1250","windows-1251","windows-1252","windows-1253","windows-1254","windows-1255","windows-1256","windows-1257","windows-1258","GBK","gb18030","Big5","EUC-JP","Shift_JIS","EUC-KR","UTF-16BE","UTF-16LE","x-user-defined"]');
 
+/***/ }),
+
+/***/ 8330:
+/***/ ((module) => {
+
+"use strict";
+module.exports = /*#__PURE__*/JSON.parse('{"name":"@belenkadev/be-a11y","version":"3.0.0","description":"Accessibility (a11y) auditor for HTML/template projects and URLs — CLI, Node API, and GitHub Action for WCAG 2.1 / EAA checks","keywords":["js","web-accesibility","a11y"],"homepage":"https://github.com/be-lenka/be-a11y#readme","bugs":{"url":"https://github.com/be-lenka/be-a11y/issues"},"repository":{"type":"git","url":"git+https://github.com/be-lenka/be-a11y.git"},"license":"MIT","author":"BeLenka X Barebarics","type":"commonjs","main":"index.js","scripts":{"test":"node --test test/","build":"ncc build index.js -o dist","prepublishOnly":"npm test"},"engines":{"node":">=20.18.1"},"files":["index.js","src/","AGENTS.md"],"dependencies":{"@actions/core":"^1.11.1","chalk":"^4.1.2","cheerio":"^1.1.2","node-fetch":"^2.7.0","tinycolor2":"^1.6.0"},"bin":{"be-a11y":"index.js"},"directories":{"doc":"docs"},"devDependencies":{"@vercel/ncc":"^0.38.3"}}');
+
 /***/ })
 
 /******/ 	});
@@ -98236,210 +100756,12 @@ module.exports = /*#__PURE__*/JSON.parse('["UTF-8","IBM866","ISO-8859-2","ISO-88
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
-var __webpack_exports__ = {};
-const fs = __nccwpck_require__(9896);
-const path = __nccwpck_require__(6928);
-const chalk = __nccwpck_require__(465);
-const fetch = __nccwpck_require__(6705); // v2 for CommonJS
-const core = __nccwpck_require__(7484);
-
-// Rules
-const headingOrder = __nccwpck_require__(5408);
-const headingEmpty = __nccwpck_require__(8501);
-const altAttributes = __nccwpck_require__(3066);
-const ariaLabels = __nccwpck_require__(408);
-const missingAria = __nccwpck_require__(7141);
-const linksOpenNewTab = __nccwpck_require__(4384);
-const contrast = __nccwpck_require__(8468);
-const landmarkRoles = __nccwpck_require__(3893);
-const iframeTitles = __nccwpck_require__(9801);
-const ariaRoles = __nccwpck_require__(5158);
-const labelsWithoutFor = __nccwpck_require__(8337);
-const multipleH1 = __nccwpck_require__(1141);
-const emptyLinks = __nccwpck_require__(1992);
-const unlabeledInputs = __nccwpck_require__(9612);
-
-// Utils
-const configuration = __nccwpck_require__(6564);
-const { printErrors, printSummary } = __nccwpck_require__(1284);
-
-const allowedExtensions = [
-  ".latte",
-  ".html",
-  ".php",
-  ".twig",
-  ".edge",
-  ".tsx",
-  ".jsx",
-];
-
-const excludedDirs = [
-  "node_modules",
-  "vendor",
-  "dist",
-  "build",
-  "temp",
-  ".idea",
-  ".git",
-  "log",
-  "bin",
-];
-
-// If running in GitHub Actions, use @actions/core to get inputs
-let input, outputJson;
-
-// Dynamically require @actions/core if available
-input = core.getInput("url") || core.getInput("input") || "";
-outputJson = core.getInput("report") || "";
-
-// Fallback to CLI arguments for local/testing use
-if (!input) {
-  input = process.argv[2];
-  if (!outputJson) {
-    outputJson = process.argv[3];
-  }
-}
-
-let config = configuration("a11y.config.json");
-
-if (!input) {
-  console.error(
-    chalk.red("Please provide a directory path or URL as the first argument.")
-  );
-  process.exit(1);
-}
-
-/**
- * Determines if a rule should run based on configuration.
- * Defaults to enabled unless explicitly set to false.
- * @param {string} rule - Rule name from config.rules keys.
- * @returns {boolean} Whether the rule is enabled.
- */
-const shouldRun = (rule) => config.rules[rule] !== false;
-
-/**
- * Recursively finds files with allowed extensions in a directory.
- * Ignores directories listed in `excludedDirs`.
- * @param {string} dir - Directory path to search.
- * @returns {string[]} Array of matched file paths.
- */
-function findFiles(dir) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  return entries.flatMap((entry) => {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (excludedDirs.includes(entry.name)) return [];
-      return findFiles(fullPath);
-    }
-    if (allowedExtensions.includes(path.extname(entry.name))) return [fullPath];
-    return [];
-  });
-}
-
-/**
- * Exports the full list of errors to a JSON file.
- * @param {object[]} errors - List of error objects.
- * @param {string} outputPath - Path to save the JSON file.
- */
-function exportToJson(errors, outputPath) {
-  try {
-    fs.writeFileSync(outputPath, JSON.stringify(errors, null, 2), "utf-8");
-    console.log(chalk.blue(`📦 Results exported to ${outputPath}`));
-  } catch (err) {
-    console.error(chalk.red(`Failed to export JSON: ${err.message}`));
-  }
-}
-
-/**
- * Runs all accessibility checks on a single HTML content string.
- * Used for analyzing remote HTML via URL input.
- * @param {string} content - Raw HTML string.
- * @param {string} label - Display name (usually file path or URL).
- */
-async function analyzeContent(content, label) {
-  const errors = [
-    ...(shouldRun("alt-attributes") ? altAttributes(content, label) : []),
-    ...(shouldRun("aria-invalid") ? ariaLabels(content, label) : []),
-    ...(shouldRun("missing-aria") ? missingAria(content, label) : []),
-    ...(shouldRun("contrast") ? contrast(content, label) : []),
-    ...(shouldRun("aria-role-invalid") ? ariaRoles(content, label) : []),
-    ...(shouldRun("missing-landmark") ? landmarkRoles(content, label) : []),
-    ...(shouldRun("label-missing-for") ? labelsWithoutFor(content, label) : []),
-    ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, label) : []),
-    ...(shouldRun("empty-link") ? emptyLinks(content, label) : []),
-    ...(shouldRun("iframe-title-missing") ? iframeTitles(content, label) : []),
-    ...(shouldRun("multiple-h1") ? multipleH1(content, label) : []),
-    ...(shouldRun("heading-order") ? headingOrder(content, label) : []),
-    ...(shouldRun("heading-empty") ? headingEmpty(content, label) : []),
-    ...(shouldRun("link-new-tab-warning")
-      ? linksOpenNewTab(content, label)
-      : []),
-  ];
-
-  if (errors.length > 0) {
-    printErrors(errors);
-    printSummary(errors);
-    if (outputJson) exportToJson(errors, outputJson);
-    process.exit(1);
-  } else {
-    console.log(chalk.green.bold("✅ No accessibility issues found!"));
-  }
-}
-
-(async () => {
-  if (input.startsWith("http://") || input.startsWith("https://")) {
-    try {
-      const res = await fetch(input);
-      const html = await res.text();
-      await analyzeContent(html, input);
-    } catch (err) {
-      console.error(chalk.red(`Failed to load URL: ${err.message}`));
-      process.exit(1);
-    }
-  } else if (fs.existsSync(input) && fs.statSync(input).isDirectory()) {
-    const files = findFiles(input);
-    let allErrors = [];
-
-    for (const file of files) {
-      const content = fs.readFileSync(file, "utf-8");
-
-      allErrors.push(
-        ...(shouldRun("alt-attributes")
-          ? altAttributes(content, file, config)
-          : []),
-        ...(shouldRun("aria-invalid") ? ariaLabels(content, file) : []),
-        ...(shouldRun("missing-aria") ? missingAria(content, file) : []),
-        ...(shouldRun("contrast") ? contrast(content, file) : []),
-        ...(shouldRun("aria-role-invalid") ? ariaRoles(content, file) : []),
-        ...(shouldRun("label-missing-for")
-          ? labelsWithoutFor(content, file)
-          : []),
-        ...(shouldRun("input-unlabeled") ? unlabeledInputs(content, file) : []),
-        ...(shouldRun("empty-link") ? emptyLinks(content, file) : []),
-        ...(shouldRun("iframe-title-missing")
-          ? iframeTitles(content, file)
-          : []),
-        ...(shouldRun("multiple-h1") ? multipleH1(content, file) : []),
-        ...(shouldRun("heading-order") ? headingOrder(content, file) : []),
-        ...(shouldRun("heading-empty") ? headingEmpty(content, file) : []),
-        ...(shouldRun("link-new-tab-warning")
-          ? linksOpenNewTab(content, file)
-          : [])
-        // ...(shouldRun("missing-landmark") ? landmarkRoles(content, file) : []),
-      );
-    }
-
-    if (allErrors.length) {
-      printErrors(allErrors);
-      printSummary(allErrors);
-      if (outputJson) exportToJson(allErrors, outputJson);
-      process.exit(1);
-    } else {
-      console.log(chalk.green.bold("✅ No accessibility issues found!"));
-    }
-  }
-})();
-
-module.exports = __webpack_exports__;
+/******/ 	
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	// This entry module is referenced by other modules so it can't be inlined
+/******/ 	var __webpack_exports__ = __nccwpck_require__(1805);
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
 /******/ })()
 ;
