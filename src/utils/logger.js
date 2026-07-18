@@ -1,78 +1,108 @@
 const chalk = require("chalk");
+const { typeMeta } = require("../registry");
 
 /**
- * Groups an array of errors by their `type` property.
- * @param {object[]} errors - List of error objects.
- * @returns {object} Errors grouped by type.
+ * Metadata for a type, with a safe fallback for unregistered types so the
+ * logger never throws on unexpected input.
  */
-function groupErrors(errors) {
-  return errors.reduce((acc, error) => {
-    if (!acc[error.type]) acc[error.type] = [];
-    acc[error.type].push(error);
-    return acc;
-  }, {});
+function metaFor(type) {
+  return (
+    typeMeta[type] || {
+      severity: "error",
+      label: type,
+      emoji: "•",
+      wcag: [],
+      hint: null,
+    }
+  );
+}
+
+/** Effective severity of an issue (enriched field, or looked up by type). */
+function severityOf(issue) {
+  return issue.severity || metaFor(issue.type).severity;
+}
+
+/** Groups issues by type into a Map preserving insertion order. */
+function groupByType(issues) {
+  const grouped = new Map();
+  for (const issue of issues) {
+    if (!grouped.has(issue.type)) grouped.set(issue.type, []);
+    grouped.get(issue.type).push(issue);
+  }
+  return grouped;
+}
+
+/** Orders types: errors before warnings, then alphabetically. */
+function orderTypes(types) {
+  return [...types].sort((a, b) => {
+    const sa = metaFor(a).severity;
+    const sb = metaFor(b).severity;
+    if (sa !== sb) return sa === "error" ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
 }
 
 /**
- * Prints detailed accessibility issues to the console.
- * Issues are grouped by type with color-coded headings.
- * @param {object[]} errors - List of error objects.
+ * Prints the grouped, color-coded accessibility report to stdout. The banner is
+ * intentionally on stdout (not stderr) so CI greps of stdout can detect it.
+ *
+ * @param {object[]} issues - Enriched issue objects.
  */
-function printErrors(errors) {
-  const grouped = groupErrors(errors);
+function printErrors(issues) {
+  const grouped = groupByType(issues);
 
-  const typeLabels = {
-    "heading-order": chalk.yellow.bold("📐 Heading Order"),
-    "heading-empty": chalk.red.bold("❗ Empty Headings"),
-    "missing-alt": chalk.cyan.bold("🖼️  Missing ALT"),
-    "alt-empty": chalk.white.bold("⬜  AL T Empty"),
-    "alt-too-long": chalk.red.bold("↔️  ALT Too Long"),
-    "alt-decorative-incorrect": chalk.gray.bold("🌈  ALT Decorative"),
-    "alt-functional-empty": chalk.blueBright.bold("🔗  ALT Functional"),
-    "aria-invalid": chalk.magenta.bold("♿  ARIA Issues"),
-    "missing-aria": chalk.blue.bold("👀  Missing ARIA"),
-    "aria-role-invalid": chalk.blue.bold("🧩  ARIA Role Issues"),
-    "missing-landmark": chalk.yellowBright.bold("🏛️  Landmark Elements"),
-    "contrast": chalk.red.bold("🎨  Contrast Issues"),
-    "label-for-missing": chalk.red.bold("🔗  Broken Label Association"),
-    "label-missing-for": chalk.yellow.bold("🏷️  Unassociated Label"),
-    "redundant-title": chalk.gray.bold("📛  Redundant Title Text"),
-    "multiple-h1": chalk.yellow.bold("🧱  Multiple H1s"),
-    "input-unlabeled": chalk.magenta.bold("🔘  Unlabeled Checkboxes/Radios"),
-    "empty-link": chalk.red.bold("📭  Empty or Useless Link"),
-    "iframe-title-missing": chalk.blue.bold("🖼️  Missing <iframe> Title"),
-    "link-new-tab-warning": chalk.yellow.bold("🧭  New Tab Warning"),
-  };
+  console.log(chalk.red.bold("\n🚨 Accessibility Issues Found:\n"));
 
-  console.error(chalk.red("\n🚨 Accessibility Issues Found:\n"));
+  for (const type of orderTypes(grouped.keys())) {
+    const meta = metaFor(type);
+    const color = meta.severity === "error" ? chalk.red.bold : chalk.yellow.bold;
+    const wcag =
+      meta.wcag && meta.wcag.length
+        ? chalk.gray(`  WCAG ${meta.wcag.join(", ")}`)
+        : chalk.gray("  Best practice");
 
-  for (const [type, list] of Object.entries(grouped)) {
-    const label = typeLabels[type] || chalk.white.bold(type);
-    console.log(`\n${label}`);
-    for (const { file, line, message } of list) {
+    console.log(
+      `\n${meta.emoji}  ${color(meta.label)} ${chalk.gray(`[${meta.severity}]`)}${wcag}`
+    );
+
+    for (const issue of grouped.get(type)) {
       console.log(
-        `  ${chalk.gray("-")} ${chalk.green(file)}:${chalk.yellow(
-          line,
-        )} – ${chalk.white(message)}`,
+        `  ${chalk.gray("-")} ${chalk.green(issue.file)}:${chalk.yellow(
+          issue.line
+        )} – ${chalk.white(issue.message)}`
       );
+      if (issue.hint) console.log(`    ${chalk.gray(`↳ ${issue.hint}`)}`);
     }
   }
 }
 
 /**
- * Prints a summary table of accessibility issue counts by type.
- * @param {object[]} errors - List of error objects.
+ * Prints a summary table (Issue Type / Severity / Count) plus an eslint-style
+ * totals line to stdout.
+ *
+ * @param {object[]} issues - Enriched issue objects.
  */
-function printSummary(errors) {
-  const grouped = groupErrors(errors);
-  const summary = Object.entries(grouped).map(([type, list]) => ({
+function printSummary(issues) {
+  const grouped = groupByType(issues);
+  const rows = orderTypes(grouped.keys()).map((type) => ({
     "Issue Type": type,
-    Count: list.length,
+    Severity: metaFor(type).severity,
+    Count: grouped.get(type).length,
   }));
 
-  console.log(chalk.bold("\n📊 Accessibility Checksum Summary:"));
-  console.table(summary);
+  console.log(chalk.bold("\n📊 Accessibility Summary:"));
+  console.table(rows);
+
+  const errors = issues.filter((i) => severityOf(i) === "error").length;
+  const warnings = issues.length - errors;
+  const plural = (n) => (n === 1 ? "" : "s");
+  const color = errors > 0 ? chalk.red.bold : chalk.yellow.bold;
+  console.log(
+    color(
+      `\n✖ ${issues.length} problem${plural(issues.length)} ` +
+        `(${errors} error${plural(errors)}, ${warnings} warning${plural(warnings)})`
+    )
+  );
 }
 
-
-module.exports = { printErrors, printSummary }
+module.exports = { printErrors, printSummary };
