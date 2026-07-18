@@ -20,7 +20,7 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "test": "npm install",
+    "test": "node --test test/",
     "build": "ncc build index.js -o dist"
   },
   "dependencies": {

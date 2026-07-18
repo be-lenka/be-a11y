@@ -1,0 +1,2 @@
+This is a plain-text file with a non-scannable extension.
+It must be ignored by the directory walk: <img src="ignore-me.jpg">
