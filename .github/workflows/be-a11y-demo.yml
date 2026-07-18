@@ -1,0 +1,41 @@
+name: Run be-a11y Accessibility Checks (demo)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL, directory, or file to analyze'
+        required: true
+        default: 'https://example.com'
+      report:
+        description: 'Path to the JSON report'
+        required: false
+        default: 'a11y-report.json'
+
+jobs:
+  accessibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run be-a11y
+        id: a11y
+        continue-on-error: true
+        uses: ./ # or be-lenka/be-a11y@v3 once published
+        with:
+          url: ${{ github.event.inputs.url }}
+          report: ${{ github.event.inputs.report }}
+
+      - name: Show outputs
+        run: |
+          echo "total    = ${{ steps.a11y.outputs.total }}"
+          echo "errors   = ${{ steps.a11y.outputs.errors }}"
+          echo "warnings = ${{ steps.a11y.outputs.warnings }}"
+          echo "report   = ${{ steps.a11y.outputs.report-path }}"
+
+      - name: Upload report
+        if: ${{ github.event.inputs.report != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: ${{ github.event.inputs.report }}

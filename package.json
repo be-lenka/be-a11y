@@ -1,7 +1,7 @@
 {
   "name": "@belenkadev/be-a11y",
-  "version": "2.2.0",
-  "description": "Web accesibility tools",
+  "version": "3.0.0",
+  "description": "Accessibility (a11y) auditor for HTML/template projects and URLs — CLI, Node API, and GitHub Action for WCAG 2.1 / EAA checks",
   "keywords": [
     "js",
     "web-accesibility",
@@ -21,8 +21,17 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test test/",
-    "build": "ncc build index.js -o dist"
+    "build": "ncc build index.js -o dist",
+    "prepublishOnly": "npm test"
   },
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "AGENTS.md"
+  ],
   "dependencies": {
     "@actions/core": "^1.11.1",
     "chalk": "^4.1.2",

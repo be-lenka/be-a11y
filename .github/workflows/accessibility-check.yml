@@ -2,35 +2,59 @@ name: Accessibility Check
 
 on:
   push:
-    branches: [main]
+    branches: [master, main]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
-  accessibility:
+  a11y:
     runs-on: ubuntu-latest
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 🟢 Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: 📦 Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: 🔍 Run Accessibility Checker
+      - name: 🧪 Run tests
+        run: npm test
+
+      - name: 🚦 CLI smoke — violations fixture must fail (exit 1)
         run: |
-          node index.js ./public > output.txt || true
-          cat output.txt
-          grep "🚨 Accessibility Issues Found" output.txt && exit 1 || echo "No critical issues."
+          node index.js test/fixtures/violations > /dev/null 2>&1; code=$?
+          test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
 
-      - name: 📤 Upload report artifact
+      - name: ✅ CLI smoke — clean fixture must pass (exit 0) and write a report
+        run: |
+          node index.js test/fixtures/clean report-clean.json
+          test -f report-clean.json
+
+      - name: 📦 Bundle smoke — dist/index.js must fail on violations (exit 1)
+        run: |
+          node dist/index.js test/fixtures/violations > /dev/null 2>&1; code=$?
+          test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
+
+      - name: 🔁 dist/ must be freshly built from source
+        run: |
+          npm run build
+          git diff --quiet -- dist/ || {
+            echo "dist/ is stale — run 'npm run build' and commit the result.";
+            git --no-pager diff --stat -- dist/;
+            exit 1;
+          }
+
+      - name: 📝 Generate a sample report artifact
+        run: node index.js test/fixtures/violations report.json || true
+
+      - name: 📤 Upload accessibility report
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: accessibility-report
-          path: output.txt
+          path: report.json
