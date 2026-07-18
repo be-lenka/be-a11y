@@ -1,14 +1,28 @@
 name: 'be-a11y Accessibility Checker'
-description: 'Automated accessibility checks for HTML or URLs with be-a11y.'
+description: 'Automated accessibility checks for HTML directories, files, or URLs with be-a11y.'
 author: 'be-lenka'
 inputs:
   url:
-    description: 'URL or directory to analyze (e.g. https://example.com or ./public)'
-    required: true
-  report:
-    description: 'Optional path for JSON report output (e.g. report.json)'
+    description: 'URL, directory, or file to analyze (e.g. https://example.com or ./public). Alias: input.'
     required: false
     default: ''
+  input:
+    description: 'Alias for `url` — URL, directory, or file to analyze.'
+    required: false
+    default: ''
+  report:
+    description: 'Optional path for JSON report output (e.g. report.json).'
+    required: false
+    default: ''
+outputs:
+  total:
+    description: 'Total number of accessibility issues found.'
+  errors:
+    description: 'Number of error-severity issues.'
+  warnings:
+    description: 'Number of warning-severity issues.'
+  report-path:
+    description: 'Path to the written JSON report (empty when no report was requested).'
 runs:
   using: 'node20'
   main: 'dist/index.js'

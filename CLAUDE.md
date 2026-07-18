@@ -4,76 +4,107 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-be-a11y (`@belenkadev/be-a11y`) is a Node.js CLI tool — also packaged as a reusable GitHub Action — that audits HTML-based projects for accessibility (a11y) issues relevant to WCAG 2.1 and the European Accessibility Act (EAA). It scans a local directory of templates or a remote URL, runs a set of rule modules, and prints a grouped, color-coded report (optionally exported to JSON). It exits non-zero when issues are found, so it can gate CI.
+be-a11y (`@belenkadev/be-a11y`) is a Node.js accessibility (a11y) auditor for HTML/template projects — shipped as a **CLI**, a `require()`-able **Node API**, and a **GitHub Action**. It scans a directory, a single file, or a URL, runs **29 rules** (36 issue types) covering WCAG 2.1 / EAA, and prints a grouped color report or a structured **JSON report (schema v2)**. It exits non-zero when issues are found, so it can gate CI.
 
-- CommonJS (`"type": "commonjs"`). No framework, no database. The Action ships as a single file bundled with `@vercel/ncc` (see Build).
-- Dependencies: **cheerio** (HTML parsing), **chalk** (colored output), **tinycolor2** (contrast math), **node-fetch** (URL fetch), **@actions/core** (reads inputs when run as a GitHub Action). `chalk` and `node-fetch` must stay on CommonJS-compatible majors — see Gotchas.
+- CommonJS (`"type": "commonjs"`). No framework, no database. Node ≥ 20.18.1.
+- The Action ships as a single `@vercel/ncc` bundle (`dist/index.js`, committed — see Build).
+- Dependencies: **cheerio** (HTML parsing, used with `sourceCodeLocationInfo`), **chalk** (color), **tinycolor2** (contrast math), **node-fetch** (URL fetch), **@actions/core** (Action inputs/outputs). `chalk` and `node-fetch` must stay CommonJS-compatible — see Gotchas.
 
 ## Commands
 
 ```bash
-npm install                       # install deps (also what `npm test` runs — there is no real test suite)
-node index.js <dir>               # scan a directory of templates
-node index.js <url>               # scan a remote http(s) URL
-node index.js <dir> report.json   # scan + write the full error list to JSON
-node index.js ./public            # exactly what the CI accessibility-check runs
-npm run build                     # bundle index.js -> dist/index.js with ncc (the Action entry point)
+npm install                        # install deps
+npm test                           # node --test test/ — the real suite (registry, config, analyzer, CLI, one file per rule)
+npm run build                      # ncc build index.js -> dist/index.js (the Action entry point)
+
+node index.js <dir>                # scan a directory recursively
+node index.js <file>               # scan a single file (any extension)
+node index.js <url>                # scan a remote http(s) URL
+node index.js <dir> report.json    # scan + write the JSON report (written even when clean)
+node index.js <target> --json      # print the JSON report to stdout
+node index.js --list-rules         # print all rules + metadata as JSON
+node index.js --help               # usage
 ```
 
-No linters, formatters, or automated tests are configured; `npm test` is a no-op alias for `npm install`. Verify changes by running `node index.js` against a sample directory or URL and reading the output (`🚨` report, or `✅ No accessibility issues found!`).
+Verify changes by running `npm test` and by scanning `test/fixtures/violations`
+(should exit 1) and `test/fixtures/clean` (should exit 0).
 
-> **Inputs:** run as a GitHub Action, `index.js` reads `url`/`input`/`report` via `@actions/core` (`core.getInput`); outside Actions those return `""` and it falls back to `process.argv[2]` (dir/URL) and `process.argv[3]` (JSON path) — `index.js:49-62`.
-> The directory branch only runs when the argument is an existing directory (`index.js:160`); a missing/mistyped path or a single file matches neither branch, so the tool exits 0 with no output. There is no `./public` in this repo — that invocation is meaningful in consuming projects.
+> **Exit codes:** `0` clean · `1` issues found · `2` usage/environment error (no
+> input, bad path, fetch failure / HTTP non-2xx, report-write failure, unknown
+> flag).
+>
+> **Streams:** stdout = the report only (human report + summary, the `✅` clean
+> line, or JSON; the `🚨` banner is on stdout). stderr = diagnostics (usage,
+> errors, config warning, per-rule crash notices, `📦 Results exported…`).
 
 ## Build (the GitHub Action)
 
-The Action's entry point is **`dist/index.js`** (`action.yml` → `runs.main`, `using: node20`), a single CommonJS bundle produced by `npm run build` (`ncc build index.js -o dist`). `dist/index.js` is **committed** and ~3.8 MB. ⚠️ It is generated — never hand-edit it, and **rebuild + commit it (`npm run build`) whenever you change `index.js`, a rule, or a dependency**, or the Action ships stale code. (ncc inlines ESM deps, so the bundle tolerates an ESM chalk even though the direct `node index.js` path does not — see Gotchas.)
+The Action's entry point is **`dist/index.js`** (`action.yml` → `runs.main`, `using: node20`), a committed `ncc` bundle (~3.8 MB). ⚠️ It is generated — never hand-edit it, and **rebuild + commit it (`npm run build`) whenever you change `index.js`, a rule, a util, the registry, or a dependency**, or the Action ships stale code. CI enforces this with a `git diff --quiet -- dist/` freshness gate. (The npm tarball excludes `dist/` via `package.json` `files`; the Action uses the committed bundle from the repo.)
 
 ## Architecture
 
-`index.js` is the orchestrator (top-level IIFE at `index.js:150`):
-1. Resolves input from `@actions/core` inputs, falling back to `process.argv` (`index.js:49-62`).
-2. Loads `a11y.config.json` via `src/utils/configuration.js` (`index.js:64`).
-3. URL input → `fetch` HTML → `analyzeContent()` (`index.js:151-159`); directory input → `findFiles()` recursive walk → read each file → run rules inline (`index.js:160-201`).
-4. Aggregates error objects, then calls `printErrors()` + `printSummary()` from `src/utils/logger.js` and `process.exit(1)` if any (URL path `index.js:140-144`; directory path `index.js:193-197`).
+`index.js` is **both the library and the CLI** (shebang line 1; `if (require.main === module) main()`).
 
-**Rule modules** live in `src/rules/*.js` (14 of them: `altAttributes`, `ariaLabels`, `ariaRoles`, `contrast`, `emptyLinks`, `headingEmpty`, `headingOrder`, `iframeTitles`, `labelsWithoutFor`, `landmarkRoles`, `linksOpenNewTab`, `missingAria`, `multipleH1`, `unlabeledInputs`). Each is a CommonJS module exporting one function:
+**Library (pure — no `process.exit`, no stdout; stderr diagnostics only):**
+- `analyzeContent(content, label, config?)` — THE runner: iterate enabled registry rules, **per-rule try/catch** (a crashing rule → stderr notice, skipped, no synthetic issue), type-level post-filter, enrich each issue from `typeMeta` (adds `ruleId, severity, wcag, hint, snippet`), sort by `(file, line, type)`.
+- `scanPath(target, config?)` → `{ issues, filesScanned }` — directory (recursive, sorted, config-driven extensions/exclusions) **or single file**. ENOENT throws.
+- `scanUrl(url, config?)` → `Promise<{ issues, filesScanned: 1 }>` — throws on network error **and on non-2xx**.
+- `loadConfig(path?)`, `buildReport(issues, meta)`, `buildRuleList()`, `rules`.
+
+**CLI (`main()`):** hand-rolled arg parsing (flags position-independent); resolves `@actions/core` inputs **only when `GITHUB_ACTIONS === "true"`**; sets `process.exitCode` (never `process.exit()` — that truncates piped stdout); emits Action outputs + job summary when in Actions.
+
+**Rule modules** live in `src/rules/*.js` (29 of them). Each is a CommonJS module exporting one function:
 
 ```js
-module.exports = function ruleName(content, file /*, config */) {
-  const $ = cheerio.load(content);
+module.exports = function ruleName(content, file, config) {
+  const $ = loadDocument(content);          // from src/utils/dom.js — never cheerio.load directly
   const errors = [];
   // inspect the DOM, push { file, line, type, message }
   return errors;
 };
 ```
 
-- `content` is the raw HTML string; `file` is the path/URL label shown in output.
-- Use **cheerio** for DOM traversal — never regex/string scraping.
-- Compute `line` with `getLineNumber(content, tagIndex)` from `src/utils/getLineNumber.js`.
-- Every error object has exactly the keys `{ file, line, type, message }`. `type` is a kebab-case category that maps to an emoji/label in the `typeLabels` map (defined **inside `printErrors()`** in `logger.js`); add an entry there for any new `type`, otherwise it falls back to `chalk.white.bold(type)`.
+- Compute `line` with `getLine($, el, content)` (from `src/utils/dom.js`) — accurate against **raw source** via parse5 `sourceCodeLocation` (template noise no longer shifts lines).
+- Use **cheerio** for traversal — never regex/string scraping.
+- Error objects have exactly `{ file, line, type, message }`. Enrichment happens centrally in `analyzeContent`, never in a rule.
 
-**Config gating.** `a11y.config.json` has a `rules` map of kebab-case keys → boolean. `index.js` defines `shouldRun(rule)` = `config.rules[rule] !== false` (enabled unless explicitly `false`, `index.js:79`) and wraps every rule call in it.
+**Shared utils (`src/utils/`):**
+- `dom.js` — `loadDocument` (cheerio + `sourceCodeLocationInfo` + single-entry parse cache), `getLine`/`getLocation` (parse5 → `startIndex` → legacy indexOf → line 1), `isFullDocument` (regex on raw source).
+- `accessibleName.js` — `getAccessibleName($, el)` (simplified accname).
+- `visibility.js` — `isHidden` (self+ancestors: aria-hidden, `hidden`, inline display:none/visibility:hidden), `parseInlineStyle`.
+- `ids.js` — `collectIds($)` → `{ idSet, byId, duplicates }` (memoized; Map lookups replace `$("#" + id)`, killing the selector-injection crash class).
+- `looksTemplated.js` — detects `{{ }}`, `{% %}`, `${ }`, `<?php`, `<% %>`, `{ }`.
+- `configuration.js` — `loadConfig`; `logger.js` — `printErrors`/`printSummary` (labels/emoji from `typeMeta`).
+
+**`src/registry.js` is the single source of truth** — an array of `{ id, description, check, types }`, plus a flat `typeMeta` index. It replaced the two hand-duplicated rule lists and the inline `typeLabels` map.
+
+### Rule / config model
+
+- **`id`** is the config key. `config.rules[id] !== false` → rule enabled.
+- **Type toggle:** `config.rules[<type>] === false` drops just that emitted type (central post-filter in `analyzeContent`) — this is how sub-rules like `alt-too-long` / `redundant-title` are silenced.
+- **`options`** namespace: per-rule settings, e.g. `options["alt-attributes"].maxLength`, `options["link-new-tab"].phrases`/`.extraClasses`. Config is passed to **every** rule on **both** paths.
+- `allowedExtensions` / `excludedDirs` are now honored: object-map form merges over defaults (`true` adds, `false` removes), array form replaces.
 
 ### Gotchas (verified, non-obvious)
-- **chalk and node-fetch must stay on CommonJS-compatible majors.** `index.js:3-4` does `require("chalk")` / `require("node-fetch")`, so both are pinned to their last CJS major: **chalk `^4`** and **node-fetch `^2`**. Do not bump them in isolation — chalk **v5** and node-fetch **v3** are ESM-only, so `require()` returns a `{ default, … }` namespace with no usable members (chalk 5 makes every `chalk.yellow.bold(...)` throw `TypeError: Cannot read properties of undefined`). That breaks `node index.js` and the CI accessibility-check, which runs on **Node 18** (where `require(esm)` does not exist at all). chalk is imported in `index.js`, `src/utils/logger.js`, and `src/utils/configuration.js`. Upgrading either requires migrating the project to ESM first.
-- **`dist/index.js` is a committed, generated ncc bundle** — rebuild with `npm run build` after any source/dependency change (see Build).
-- **Adding a rule touches `index.js` in three places**: the `require(...)` at the top (`index.js:8-21`), the rule list in `analyzeContent()` (URL path, `index.js:122-137`), and the **duplicated** rule list in the directory path (`index.js:168-188`). The two lists are hand-maintained and can drift.
-- **The two paths differ**: `missing-landmark` (`landmarkRoles`) runs on the URL path (`index.js:127`) but is **commented out** on the directory path (`index.js:189`), and is `false` by default in `a11y.config.json`.
-- **`allowedExtensions` and `excludedDirs` are hardcoded** at the top of `index.js` (`index.js:27-35` and `index.js:37-47`), not read from config. `a11y.config.json` also defines those sections, but `index.js` ignores them — only `config.rules` is consumed.
-- **Config key ≠ error `type`**: the config key `alt-attributes` enables `altAttributes`, which emits types `missing-alt`, `alt-empty`, `alt-too-long`, `alt-decorative-incorrect`, `alt-functional-empty`, and `redundant-title`. The key→module wiring is manual.
-- **`config` is passed to only one rule** (`altAttributes`, directory path only — `index.js:168-170`, three args). Every other rule call gets just `(content, label/file)`.
-- **`@actions/core` pulls a vulnerable `undici`** (`@actions/core → @actions/http-client → undici@5.29.0`), which `npm audit` flags. It is only exercised in the Actions runtime; clearing it means bumping `@actions/core` to v3 (a major bump) or adding an `overrides` entry.
+
+- **chalk and node-fetch must stay on CommonJS majors.** `index.js` does `require("chalk")` / `require("node-fetch")`, so chalk is pinned to **^4** and node-fetch to **^2** (their last CJS majors). chalk v5 / node-fetch v3 are ESM-only; `require()`-ing them breaks the CLI. chalk is imported in `index.js` and `src/utils/{logger,configuration}.js`. Upgrading requires an ESM migration first.
+- **`dist/index.js` is a committed, generated ncc bundle** — rebuild with `npm run build` after any source/dependency change (CI has a freshness gate).
+- **Adding a rule touches `src/registry.js` in exactly one place** (plus the new rule file, its test, and `a11y.config.json`). There are no longer two drifting rule lists in `index.js`.
+- **Use `process.exitCode`, not `process.exit()`** — `process.exit()` truncates buffered piped stdout (e.g. large `--json` / `--list-rules` output).
+- **`@actions/core` inputs are consulted only when `GITHUB_ACTIONS === "true"`** — a stray local `INPUT_URL` env var will not hijack a CLI run.
+- **Line numbers come from parse5 `sourceCodeLocation`** (via `loadDocument`/`getLine`). Implied `html`/`head`/`body` have `null` locations — rules that target them (html-lang, document-title, landmark, skip-link) gate on the raw source or fall back.
+- **`@actions/core` pulls a vulnerable `undici`** (flagged by `npm audit`); only exercised in the Actions runtime. Clearing it means bumping `@actions/core` (major) or adding an `overrides` — a documented follow-up.
 
 ## Conventions
 
-- CommonJS (`require`/`module.exports`), 2-space indentation, JSDoc (`@param`/`@returns`) on exported functions — match the existing source style.
-- All user-facing output goes through **chalk**; reuse the `logger.js` helpers (`printErrors`/`printSummary`) for reports.
-- Commit history follows **Conventional Commits** (`feat:`, `refactor:`, `deps:`, `docs:`, `chore:`); feature work merges into `master` via a `dev` branch (see PRs in `git log`). `master` is the default branch.
-- `docs/CONTRIBUTING.md` documents how to add a new rule, a Code Style section, and a PR checklist. (It does not describe the commit/branch conventions above — those are observed from git history.)
+- CommonJS, 2-space indentation, JSDoc on exported functions.
+- User-facing output goes through **chalk**; reuse `logger.js` helpers.
+- **Conventional Commits** (`feat:`, `fix:`, `refactor:`, `deps:`, `docs:`, `test:`, `build:`). Default branch is `master`.
+- Tests are `node:test` under `test/` (`npm test`); one `test/rules/<rule>.test.js` per rule, plus registry/config/analyze/scan/cli scaffolds and `test/fixtures/`.
+- **AGENTS.md** documents the machine contract; **docs/CONTRIBUTING.md** the add-a-rule flow.
 
 ## CI / Action
 
-- **`.github/workflows/accessibility-check.yml`** runs on push/PR to **`main`** (note: the default branch is `master` — a mismatch): sets up **Node 18**, `npm install`, then `node index.js ./public > output.txt`, and fails the build via `grep "🚨 Accessibility Issues Found" output.txt && exit 1`; uploads `output.txt` as the **`accessibility-report`** artifact (`if: always()`).
-- **`.github/workflows/be-a11y-demo.yml.yml`** (note the doubled `.yml.yml`) is `workflow_dispatch`-only; it runs the local action (`uses: ./`) against a `url` input.
-- **`action.yml`** exposes the reusable Action (`using: node20`, `main: dist/index.js`) with inputs `url` (required) and `report` (optional).
+- **`.github/workflows/accessibility-check.yml`** runs on push/PR to **`master` and `main`**: Node 20, `npm ci`, `npm test`, CLI smokes (violations→exit 1, clean→exit 0 + report), a bundle smoke on `dist/index.js`, the **dist-freshness gate**, and uploads a sample report artifact.
+- **`.github/workflows/be-a11y-demo.yml`** is `workflow_dispatch`-only; runs the local action (`uses: ./`) and echoes the outputs.
+- **`action.yml`** (`using: node20`, `main: dist/index.js`): inputs `url` (alias `input`) and `report` (all optional); outputs `total`, `errors`, `warnings`, `report-path`.

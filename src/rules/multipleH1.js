@@ -1,32 +1,43 @@
-const cheerio = require("cheerio");
-const getLineNumber = require("../utils/getLineNumber");
+const { loadDocument, getLine } = require("../utils/dom");
+const { isHidden } = require("../utils/visibility");
 
 /**
- * Checks that there is only one <h1> on the page.
+ * Flags a page that exposes more than one top-level (level-1) heading. Counts
+ * non-hidden native <h1> (unless aria-level overrides it away from 1) and
+ * role="heading" with aria-level="1". Each offending heading is reported at its
+ * own line.
  *
  * @param {string} content - HTML content.
  * @param {string} file - File name.
- * @returns {object[]} List of multiple H1 tag warnings.
+ * @returns {object[]} Multiple-h1 issues.
  */
 module.exports = function multipleH1(content, file) {
-  const $ = cheerio.load(content);
-  const h1s = $("h1");
+  const $ = loadDocument(content);
+  const level1 = [];
 
-  if (h1s.length > 1) {
-    return h1s
-      .map((_, el) => {
-        const html = $.html(el);
-        const tagIndex = content.indexOf(html);
-        const lineNumber = getLineNumber(content, tagIndex);
-        return {
-          file,
-          line: lineNumber,
-          type: "multiple-h1",
-          message: `Multiple <h1> tags found (${h1s.length} total)`,
-        };
-      })
-      .get();
-  }
+  $("h1, [role=heading]").each((_, el) => {
+    const tag = el.name ? el.name.toLowerCase() : "";
+    const role = ($(el).attr("role") || "").trim().toLowerCase();
+    const ariaLevel = ($(el).attr("aria-level") || "").trim();
 
-  return [];
-}
+    let isLevel1 = false;
+    if (tag === "h1" && role !== "presentation" && role !== "none") {
+      isLevel1 = ariaLevel === "" || ariaLevel === "1";
+    } else if (role === "heading" && ariaLevel === "1") {
+      isLevel1 = true;
+    }
+    if (!isLevel1) return;
+    if (isHidden($, el)) return;
+
+    level1.push(el);
+  });
+
+  if (level1.length <= 1) return [];
+
+  return level1.map((el) => ({
+    file,
+    line: getLine($, el, content),
+    type: "multiple-h1",
+    message: `Multiple top-level headings found (${level1.length} total); use a single h1 per page`,
+  }));
+};
