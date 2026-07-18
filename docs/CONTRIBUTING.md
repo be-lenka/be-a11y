@@ -1,69 +1,121 @@
 # Contributing to `be-a11y`
 
 🎉 First off, thanks for taking the time to contribute!
-We welcome contributions from developers, testers, accessibility advocates, and open source enthusiasts.
+We welcome contributions from developers, testers, accessibility advocates, and
+open source enthusiasts.
 
 ---
 
 ## 📦 Project Overview
 
-**Accessibility Checker** is a Node.js CLI tool for detecting common accessibility issues in HTML files and templates. It helps identify WCAG and EAA-relevant problems like improper heading structure, missing alt text, invalid ARIA usage, and more.
+**be-a11y** is a Node.js accessibility auditor for HTML files, templates, and
+URLs. It ships as a CLI, a `require()`-able Node API, and a GitHub Action, and
+detects WCAG 2.1 / EAA-relevant issues across 29 rules.
+
+Architecture in one breath: `index.js` is the runner + CLI; every rule lives in
+`src/rules/<name>.js` and is registered once in `src/registry.js` (the single
+source of truth for rule metadata); shared helpers live in `src/utils/`.
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Fork and Clone
+### 1. Fork, clone, install (Node ≥ 20.18.1)
+
 ```bash
 git clone https://github.com/<your-username>/be-a11y.git
 cd be-a11y
 npm install
 ```
 
-### 2. Run the Tool
+### 2. Run the tool
 
 ```bash
-node index.js ./example-site
+node index.js ./example-site           # scan a directory
+node index.js ./example-site r.json    # scan + write a JSON report
+node index.js --list-rules             # list all rules as JSON
 ```
 
-### 3. Run with Config
+### 3. Run the tests
+
 ```bash
-node index.js ./example-site output.json
+npm test          # node --test test/
 ```
 
-### 🛠️ Contribution Types
+`npm test` runs a real suite (`node:test`, zero extra dependencies): a registry
+contract, config semantics, the analyzer/CLI, and one test file per rule.
 
-You can help in many ways:
+---
 
-- 💡 Feature Requests: Propose new rules or configuration features.
-- 🐛 Bug Reports: Open an issue with reproduction steps and a minimal test case.
-- 🧪 Rule Contributions: Implement new WCAG rules or extend existing ones.
-- 🧹 Refactoring: Help improve code structure, CLI UX, or performance.
-- 🌍 Localization/Docs: Improve the README or create documentation for non-English devs.
+## 🧪 Adding a new rule
 
-### 📄 Code Style & Guidelines
+1. **Write the rule** — `src/rules/<name>.js`, exporting a single function:
 
-- Write clean, consistent, and readable JavaScript (Node.js ≥ 16).
-- Keep rule logic modular and place new checks in checkXYZ() functions.
-- Use shouldRun("rule-name") for config gating.
-- Use chalk for CLI output (avoid raw console.log() for warnings/errors).
-- Keep consistent with cheerio for DOM parsing.
+   ```js
+   const { loadDocument, getLine } = require("../utils/dom");
 
-### 🔍 Pull Request Checklist
+   module.exports = function myRule(content, file, config) {
+     const $ = loadDocument(content);
+     const errors = [];
+     // inspect the DOM, push { file, line, type, message }
+     return errors;
+   };
+   ```
 
-- ✅ Code passes basic sanity (no runtime errors).
-- ✅ Matches style and formatting conventions.
-- ✅ Adds documentation if needed (README, comments, examples).
-- ✅ Includes a meaningful description in the PR.
-- ✅ References related issue(s), if applicable.
+   - Use **cheerio via `loadDocument`** — never `cheerio.load` directly, and never
+     regex/string scraping.
+   - Compute lines with `getLine($, el, content)` (accurate against raw source).
+   - Reuse the shared utils: `accessibleName`, `visibility` (`isHidden`),
+     `ids` (`collectIds` — never `$("#" + id)`), `looksTemplated`.
+   - Each error object has exactly `{ file, line, type, message }`. Enrichment
+     (severity/WCAG/hint/snippet) is added centrally — do **not** add it in rules.
 
-### 🤝 Code of Conduct
+2. **Register it** — add an entry to `src/registry.js` with `id`, `description`,
+   `check: require("./rules/<name>")`, and a `types` map giving each emitted
+   `type` its `severity` (`error`|`warning`), `wcag` (array), `hint`, `label`,
+   and `emoji`.
 
-We follow the Contributor Covenant Code of Conduct.
-Be respectful, inclusive, and constructive. All contributions are welcome.
+3. **Test it** — add `test/rules/<name>.test.js` with bad and good inline-HTML
+   cases (and a line-number assertion where it matters).
 
-### 📬 Got Questions?
+4. **Wire config** — add the rule `id` to `a11y.config.json` under `rules`.
 
-Open an issue
-Reach out via dev@belenka.com
-We’re excited to collaborate with you! – The Be Lenka Dev Team 💚
+5. **Rebuild the bundle (mandatory)** — the Action runs the committed
+   `dist/index.js`:
+
+   ```bash
+   npm run build      # ncc build index.js -o dist
+   ```
+
+   Commit the regenerated `dist/index.js` in the same PR, or the Action ships
+   stale code. CI enforces this with a freshness check.
+
+---
+
+## 📄 Code Style
+
+- CommonJS (`require` / `module.exports`), 2-space indentation, JSDoc
+  (`@param` / `@returns`) on exported functions — match the surrounding source.
+- All user-facing output goes through **chalk** (v4 — do not bump to v5, it is
+  ESM-only); reuse the `src/utils/logger.js` helpers for reports.
+- `chalk` (v4) and `node-fetch` (v2) must stay on their CommonJS majors.
+
+---
+
+## 🔍 Pull Request Checklist
+
+- ✅ `npm test` passes.
+- ✅ New/changed rules have tests.
+- ✅ `npm run build` run and `dist/index.js` committed if any source changed.
+- ✅ Conventional Commit messages (`feat:`, `fix:`, `refactor:`, `docs:`, …).
+- ✅ Meaningful PR description; references related issue(s).
+
+---
+
+## 🤝 Code of Conduct
+
+We follow the Contributor Covenant. Be respectful, inclusive, and constructive.
+
+## 📬 Questions?
+
+Open an issue or reach out via dev@belenka.com. – The Be Lenka Dev Team 💚
