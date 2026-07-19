@@ -10,6 +10,7 @@ const core = require("@actions/core");
 const { rules, typeMeta } = require("./src/registry");
 const loadConfig = require("./src/utils/configuration");
 const { printErrors, printSummary } = require("./src/utils/logger");
+const { renderHtmlReport } = require("./src/utils/htmlReport");
 const pkg = require("./package.json");
 
 const SCHEMA_VERSION = 2;
@@ -236,7 +237,10 @@ function buildRuleList() {
 const USAGE = `be-a11y — accessibility auditor for HTML / templates
 
 Usage:
-  be-a11y <dir|file|url> [report.json] [options]
+  be-a11y <dir|file|url> [report.json|report.html] [options]
+
+The report format is inferred from the report path's extension: .html/.htm
+(case-insensitive) writes a self-contained HTML page, anything else JSON.
 
 Options:
   --json         Print the full JSON report (schema v${SCHEMA_VERSION}) to stdout
@@ -380,7 +384,9 @@ async function main() {
 
   if (reportPath) {
     try {
-      fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
+      const isHtml = [".html", ".htm"].includes(path.extname(reportPath).toLowerCase());
+      const output = isHtml ? renderHtmlReport(report) : JSON.stringify(report, null, 2);
+      fs.writeFileSync(reportPath, output, "utf-8");
       process.stderr.write(chalk.blue(`📦 Results exported to ${reportPath}\n`));
     } catch (err) {
       return fail(`Failed to write report to ${reportPath}: ${err.message}`);
@@ -403,6 +409,7 @@ module.exports = {
   loadConfig,
   buildReport,
   buildRuleList,
+  renderHtmlReport,
   rules,
 };
 

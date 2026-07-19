@@ -8,7 +8,7 @@ on:
         required: true
         default: 'https://example.com'
       report:
-        description: 'Path to the JSON report'
+        description: 'Path to the report (.json for JSON, .html for a standalone HTML page)'
         required: false
         default: 'a11y-report.json'
 

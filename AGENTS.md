@@ -12,15 +12,17 @@ structured JSON report.
 ## Invocation
 
 ```bash
-be-a11y <dir|file|url> [report.json] [--json] [--list-rules] [--help]
+be-a11y <dir|file|url> [report.json|report.html] [--json] [--list-rules] [--help]
 # or, from a checkout:
-node index.js <dir|file|url> [report.json] [options]
+node index.js <dir|file|url> [report.json|report.html] [options]
 ```
 
 - **Positional 1** — a directory (scanned recursively), a single file (scanned
   regardless of extension), or an `http(s)://` URL.
-- **Positional 2** (optional) — path to write the JSON report to (written **even
-  when clean**).
+- **Positional 2** (optional) — path to write the report to (written **even
+  when clean**). The format is inferred from the extension: `.html` / `.htm`
+  (case-insensitive) → self-contained HTML page; anything else → JSON
+  (schema v2).
 - Flags are position-independent. Unknown flags or a 3rd positional are a usage
   error (exit 2).
 
@@ -97,6 +99,25 @@ Field notes:
 
 ---
 
+## HTML report
+
+A report path ending in `.html` / `.htm` writes a **self-contained HTML page**
+instead of JSON: inline CSS/JS, system fonts, zero external requests, light/dark
+via `prefers-color-scheme`, readable with JavaScript disabled. It renders the
+same data as the JSON report (verdict, per-file totals table, issues grouped by
+rule with severity/WCAG badges, hints, and source snippets) plus client-side
+severity filtering, text search, and expand/collapse.
+
+- **Agents should parse the JSON, not the HTML.** The HTML page is presentation
+  for humans (CI artifacts, sharing); its markup is not a stable contract. Use
+  `--json` or a `.json` report path for machine consumption.
+- The rendered page passes be-a11y itself (`analyzeContent(html, "report.html")`
+  → `[]`) — enforced by the test suite (dogfood).
+- All report data is HTML-escaped into text nodes; hostile content in scanned
+  files (script tags, template syntax, quotes) cannot break or script the page.
+
+---
+
 ## `--list-rules`
 
 ```jsonc
@@ -164,6 +185,7 @@ const {
   loadConfig,      // (path?='a11y.config.json') => NormalizedConfig
   buildReport,     // (issues, { target?, filesScanned?, timestamp? }) => ReportV2
   buildRuleList,   // () => { schemaVersion, rules }
+  renderHtmlReport,// (report: ReportV2) => string — the self-contained HTML page
   rules,           // the registry array
 } = require("@belenkadev/be-a11y");
 ```
@@ -195,7 +217,8 @@ process.exitCode = failing ? 1 : 0;
 ```
 
 - **Inputs:** `url` (or its alias `input`) and `report` — all optional, validated
-  at runtime.
+  at runtime. `report` accepts a `.json` or `.html`/`.htm` path; the format is
+  inferred from the extension, exactly like the CLI.
 - **Outputs:** `total`, `errors`, `warnings`, `report-path`. A job summary is
   written to `$GITHUB_STEP_SUMMARY` when available.
 - Action inputs are consulted **only** when `GITHUB_ACTIONS=true`, so `INPUT_*`

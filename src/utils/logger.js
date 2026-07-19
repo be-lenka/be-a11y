@@ -105,4 +105,4 @@ function printSummary(issues) {
   );
 }
 
-module.exports = { printErrors, printSummary };
+module.exports = { printErrors, printSummary, metaFor, orderTypes };

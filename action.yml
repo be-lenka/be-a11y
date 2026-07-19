@@ -11,7 +11,7 @@ inputs:
     required: false
     default: ''
   report:
-    description: 'Optional path for JSON report output (e.g. report.json).'
+    description: 'Optional path for the report output (e.g. report.json or report.html); the format is inferred from the extension — .html/.htm writes a self-contained HTML page, anything else JSON.'
     required: false
     default: ''
 outputs:
@@ -22,7 +22,7 @@ outputs:
   warnings:
     description: 'Number of warning-severity issues.'
   report-path:
-    description: 'Path to the written JSON report (empty when no report was requested).'
+    description: 'Path to the written report — JSON or HTML per the report input extension (empty when no report was requested).'
 runs:
   using: 'node20'
   main: 'dist/index.js'

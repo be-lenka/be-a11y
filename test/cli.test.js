@@ -65,6 +65,61 @@ test("clean + report path -> exit 0, report written even when clean", async () =
   assert.deepStrictEqual(report.issues, []);
 });
 
+test(".html report path -> HTML file, clean exit 0 preserved", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.html");
+  const { code, stderr } = await run([CLEAN, reportPath]);
+  assert.strictEqual(code, 0);
+  assert.match(stderr, /Results exported to/);
+  const out = fs.readFileSync(reportPath, "utf-8");
+  assert.match(out, /^<!doctype html/i);
+  assert.throws(() => JSON.parse(out), "HTML report is not JSON");
+});
+
+test(".html report path -> violations still exit 1, report written", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.html");
+  const { code } = await run([VIOL, reportPath]);
+  assert.strictEqual(code, 1);
+  assert.match(fs.readFileSync(reportPath, "utf-8"), /^<!doctype html/i);
+});
+
+test("extension inference is case-insensitive (r.HTML)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.HTML");
+  const { code } = await run([CLEAN, reportPath]);
+  assert.strictEqual(code, 0);
+  assert.match(fs.readFileSync(reportPath, "utf-8"), /^<!doctype html/i);
+});
+
+test("non-.html report path still writes schema-v2 JSON", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.json");
+  const { code } = await run([VIOL, reportPath]);
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
+  assert.strictEqual(report.schemaVersion, 2);
+  assert.ok(report.issues.length > 0);
+});
+
+test("--json + .html report: pure JSON stdout, HTML file on disk", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.html");
+  const { code, stdout } = await run([VIOL, reportPath, "--json"]);
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(stdout);
+  assert.strictEqual(report.schemaVersion, 2);
+  assert.match(fs.readFileSync(reportPath, "utf-8"), /^<!doctype html/i);
+});
+
+test("end-to-end dogfood: the HTML report itself passes be-a11y", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bea11y-cli-"));
+  const reportPath = path.join(dir, "r.html");
+  await run([VIOL, reportPath]);
+  const { code } = await run([reportPath]);
+  assert.strictEqual(code, 0, "scanning the generated report finds no issues");
+});
+
 test("--json emits pure schema-v2 JSON on stdout", async () => {
   const { stdout } = await run([VIOL, "--json"]);
   const report = JSON.parse(stdout);
