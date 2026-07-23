@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-be-a11y (`@belenkadev/be-a11y`) is a Node.js accessibility (a11y) auditor for HTML/template projects — shipped as a **CLI**, a `require()`-able **Node API**, and a **GitHub Action**. It scans a directory, a single file, or a URL, runs **29 rules** (36 issue types) covering WCAG 2.1 / EAA, and prints a grouped color report or a structured **JSON report (schema v2)**. It exits non-zero when issues are found, so it can gate CI.
+be-a11y (`@belenkadev/be-a11y`) is a Node.js accessibility (a11y) auditor for HTML/template projects — shipped as a **CLI**, a `require()`-able **Node API**, and a **GitHub Action**. It scans a directory, a single file, or a URL, runs **29 rules** (36 issue types) covering WCAG 2.1 / EAA, and prints a grouped color report, or writes a structured **JSON report (schema v2)** or a **self-contained HTML report page** (format inferred from the report path's extension). It exits non-zero when issues are found, so it can gate CI.
 
 - CommonJS (`"type": "commonjs"`). No framework, no database. Node ≥ 20.18.1.
 - The Action ships as a single `@vercel/ncc` bundle (`dist/index.js`, committed — see Build).
@@ -21,6 +21,7 @@ node index.js <dir>                # scan a directory recursively
 node index.js <file>               # scan a single file (any extension)
 node index.js <url>                # scan a remote http(s) URL
 node index.js <dir> report.json    # scan + write the JSON report (written even when clean)
+node index.js <dir> report.html    # scan + write the self-contained HTML report (.html/.htm, case-insensitive)
 node index.js <target> --json      # print the JSON report to stdout
 node index.js --list-rules         # print all rules + metadata as JSON
 node index.js --help               # usage
@@ -49,7 +50,7 @@ The Action's entry point is **`dist/index.js`** (`action.yml` → `runs.main`, `
 - `analyzeContent(content, label, config?)` — THE runner: iterate enabled registry rules, **per-rule try/catch** (a crashing rule → stderr notice, skipped, no synthetic issue), type-level post-filter, enrich each issue from `typeMeta` (adds `ruleId, severity, wcag, hint, snippet`), sort by `(file, line, type)`.
 - `scanPath(target, config?)` → `{ issues, filesScanned }` — directory (recursive, sorted, config-driven extensions/exclusions) **or single file**. ENOENT throws.
 - `scanUrl(url, config?)` → `Promise<{ issues, filesScanned: 1 }>` — throws on network error **and on non-2xx**.
-- `loadConfig(path?)`, `buildReport(issues, meta)`, `buildRuleList()`, `rules`.
+- `loadConfig(path?)`, `buildReport(issues, meta)`, `buildRuleList()`, `renderHtmlReport(report)`, `rules`.
 
 **CLI (`main()`):** hand-rolled arg parsing (flags position-independent); resolves `@actions/core` inputs **only when `GITHUB_ACTIONS === "true"`**; sets `process.exitCode` (never `process.exit()` — that truncates piped stdout); emits Action outputs + job summary when in Actions.
 
@@ -74,7 +75,8 @@ module.exports = function ruleName(content, file, config) {
 - `visibility.js` — `isHidden` (self+ancestors: aria-hidden, `hidden`, inline display:none/visibility:hidden), `parseInlineStyle`.
 - `ids.js` — `collectIds($)` → `{ idSet, byId, duplicates }` (memoized; Map lookups replace `$("#" + id)`, killing the selector-injection crash class).
 - `looksTemplated.js` — detects `{{ }}`, `{% %}`, `${ }`, `<?php`, `<% %>`, `{ }`.
-- `configuration.js` — `loadConfig`; `logger.js` — `printErrors`/`printSummary` (labels/emoji from `typeMeta`).
+- `configuration.js` — `loadConfig`; `logger.js` — `printErrors`/`printSummary` plus exported `metaFor`/`orderTypes` (labels/emoji from `typeMeta`, unknown-type fallback, errors-first ordering).
+- `htmlReport.js` — `renderHtmlReport(report)` (pure string renderer for the HTML report page) + `PALETTE` (the AA-checked color pairs, read by the palette test).
 
 **`src/registry.js` is the single source of truth** — an array of `{ id, description, check, types }`, plus a flat `typeMeta` index. It replaced the two hand-duplicated rule lists and the inline `typeLabels` map.
 
@@ -94,6 +96,7 @@ module.exports = function ruleName(content, file, config) {
 - **`@actions/core` inputs are consulted only when `GITHUB_ACTIONS === "true"`** — a stray local `INPUT_URL` env var will not hijack a CLI run.
 - **Line numbers come from parse5 `sourceCodeLocation`** (via `loadDocument`/`getLine`). Implied `html`/`head`/`body` have `null` locations — rules that target them (html-lang, document-title, landmark, skip-link) gate on the raw source or fall back.
 - **`@actions/core` pulls a vulnerable `undici`** (flagged by `npm audit`); only exercised in the Actions runtime. Clearing it means bumping `@actions/core` (major) or adding an `overrides` — a documented follow-up.
+- **The HTML report must pass be-a11y itself** (dogfood invariant, enforced by `test/htmlReport.test.js`). `src/utils/htmlReport.js` keeps all markup/CSS/JS in inline template literals (ncc bundle — no runtime asset reads), uses **zero inline `style` attributes** (the contrast rule only inspects `[style]`; palette AA is proven by a tinycolor2 test over the exported `PALETTE` instead), escapes every data field into text nodes/quoted attributes, sanitizes generated ids to `[a-z0-9-]`, and its inline `<script>` contains no `</script`, no template literals, and no report data. A new rule that fires on the report template fails the dogfood test by name.
 
 ## Conventions
 
@@ -105,6 +108,6 @@ module.exports = function ruleName(content, file, config) {
 
 ## CI / Action
 
-- **`.github/workflows/accessibility-check.yml`** runs on push/PR to **`master` and `main`**: Node 20, `npm ci`, `npm test`, CLI smokes (violations→exit 1, clean→exit 0 + report), a bundle smoke on `dist/index.js`, the **dist-freshness gate**, and uploads a sample report artifact.
+- **`.github/workflows/accessibility-check.yml`** runs on push/PR to **`master` and `main`**: Node 20, `npm ci`, `npm test`, CLI smokes (violations→exit 1, clean→exit 0 + JSON and HTML reports + a dogfood scan of the HTML report), a bundle smoke on `dist/index.js`, the **dist-freshness gate**, and uploads sample report artifacts (`report.json` + `report.html`).
 - **`.github/workflows/be-a11y-demo.yml`** is `workflow_dispatch`-only; runs the local action (`uses: ./`) and echoes the outputs.
 - **`action.yml`** (`using: node20`, `main: dist/index.js`): inputs `url` (alias `input`) and `report` (all optional); outputs `total`, `errors`, `warnings`, `report-path`.

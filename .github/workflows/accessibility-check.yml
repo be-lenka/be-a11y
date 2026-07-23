@@ -35,6 +35,10 @@ jobs:
         run: |
           node index.js test/fixtures/clean report-clean.json
           test -f report-clean.json
+          node index.js test/fixtures/clean report-clean.html
+          test -f report-clean.html
+          head -1 report-clean.html | grep -qi '^<!doctype html'
+          node index.js report-clean.html # dogfood: the HTML report passes be-a11y
 
       - name: 📦 Bundle smoke — dist/index.js must fail on violations (exit 1)
         run: |
@@ -51,12 +55,17 @@ jobs:
             exit 1;
           }
 
-      - name: 📝 Generate a sample report artifact
-        run: node index.js test/fixtures/violations report.json || true
+      - name: 📝 Generate sample report artifacts
+        run: |
+          node index.js test/fixtures/violations report.json || true
+          node index.js test/fixtures/violations report.html || true
+          node index.js report.html # dogfood: the HTML report passes be-a11y
 
       - name: 📤 Upload accessibility report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: accessibility-report
-          path: report.json
+          path: |
+            report.json
+            report.html

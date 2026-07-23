@@ -33,6 +33,7 @@ npm install
 ```bash
 node index.js ./example-site           # scan a directory
 node index.js ./example-site r.json    # scan + write a JSON report
+node index.js ./example-site r.html    # scan + write a self-contained HTML report
 node index.js --list-rules             # list all rules as JSON
 ```
 
@@ -76,7 +77,11 @@ contract, config semantics, the analyzer/CLI, and one test file per rule.
    and `emoji`.
 
 3. **Test it** — add `test/rules/<name>.test.js` with bad and good inline-HTML
-   cases (and a line-number assertion where it matters).
+   cases (and a line-number assertion where it matters). Note:
+   `test/htmlReport.test.js` dogfoods the generated HTML report through every
+   rule — your new rule must not fire on the report page itself. If that test
+   fails naming your rule, adjust the rule or the report template
+   (`src/utils/htmlReport.js`).
 
 4. **Wire config** — add the rule `id` to `a11y.config.json` under `rules`.
 

@@ -3,8 +3,9 @@
 **be-a11y** is a Node.js accessibility (a11y) auditor for HTML-based projects. It
 scans a local directory of templates, a single file, or a remote URL, runs 29
 rules covering WCAG 2.1 / EAA-relevant issues, and prints a grouped, color-coded
-report — or a structured JSON document for CI and tooling. It exits non-zero when
-issues are found, so it can gate a pipeline.
+report — or writes a structured JSON document for CI and tooling, or a
+self-contained HTML report page. It exits non-zero when issues are found, so it
+can gate a pipeline.
 
 It ships three ways: a **CLI**, a **Node API** (`require()`-able), and a **GitHub
 Action**.
@@ -26,16 +27,28 @@ git clone git@github.com:be-lenka/be-a11y.git && cd be-a11y && npm install
 ## Usage
 
 ```bash
-be-a11y <dir|file|url> [report.json] [--json] [--list-rules] [--help]
+be-a11y <dir|file|url> [report.json|report.html] [--json] [--list-rules] [--help]
 
 # examples
 node index.js ./public                 # scan a directory recursively
 node index.js ./templates/page.latte   # scan a single file
 node index.js https://example.com      # scan a live URL
 node index.js ./public report.json     # scan + write a JSON report
+node index.js ./public report.html     # scan + write a self-contained HTML report
 node index.js ./public --json          # print the JSON report to stdout
 node index.js --list-rules             # list all rules + metadata as JSON
 ```
+
+### Report formats
+
+The report format is inferred from the report path's extension: `.html` / `.htm`
+(case-insensitive) writes a **self-contained HTML page**; any other extension
+writes the JSON report (schema v2). The HTML report needs no network access
+(inline CSS/JS, system fonts), adapts to light/dark via `prefers-color-scheme`,
+stays readable with JavaScript disabled, and adds a severity filter, live text
+search, and collapsible per-rule sections — so it works offline from `file://`
+and as a shareable CI artifact. It also passes be-a11y's own audit; the test
+suite enforces that (dogfood).
 
 ### Exit codes
 
@@ -130,13 +143,17 @@ label.
 `require()` returns the API with **no side effects**:
 
 ```js
-const { scanPath, buildReport, loadConfig } = require("@belenkadev/be-a11y");
+const fs = require("fs");
+const {
+  scanPath, buildReport, loadConfig, renderHtmlReport,
+} = require("@belenkadev/be-a11y");
 
 const config = loadConfig();
 const { issues, filesScanned } = scanPath("./public", config);
 const report = buildReport(issues, { target: "./public", filesScanned });
 
 console.log(report.summary);            // { filesScanned, total, errors, warnings, byType }
+fs.writeFileSync("report.html", renderHtmlReport(report)); // self-contained HTML page
 process.exitCode = report.summary.errors > 0 ? 1 : 0;
 ```
 
@@ -175,7 +192,8 @@ jobs:
 ```
 
 The Action exposes outputs `total`, `errors`, `warnings`, and `report-path`, and
-writes a job summary.
+writes a job summary. The `report` input accepts a `.json` or `.html`/`.htm`
+path — the format is inferred from the extension, exactly like the CLI.
 
 ## Migrating from v2
 
